@@ -119,6 +119,55 @@ window.__ModuleLoader__.load({
       return (n / 1024 / 1024).toFixed(1) + ' MB'
     }
 
+    /** 图片 / 视频缩略图的统一尺寸 */
+    const MEDIA_STYLE = {
+      maxWidth: '100%',
+      maxHeight: '360px',
+      borderRadius: '10px',
+      display: 'block',
+    }
+
+    /** 文件卡片的外观 */
+    const FILE_CARD = {
+      display: 'flex',
+      gap: '10px',
+      alignItems: 'center',
+      color: 'inherit',
+      textDecoration: 'none',
+      border: '1px solid rgba(128,128,128,0.3)',
+      borderRadius: '10px',
+      padding: '8px 12px',
+      maxWidth: '320px',
+    }
+
+    /** 按类型/扩展名给一个图标，充当非图片文件的"缩略图" */
+    function fileIcon(type, name) {
+      const t = String(type || '')
+      const ext = String(name || '')
+        .toLowerCase()
+        .split('.')
+        .pop()
+      if (t.startsWith('image/')) return '🖼️'
+      if (t.startsWith('video/')) return '🎬'
+      if (t.startsWith('audio/')) return '🎵'
+      if (t === 'application/pdf' || ext === 'pdf') return '📕'
+      if (/zip|rar|7z|tar|gzip|xz/.test(t) || ['zip', 'rar', '7z', 'tar', 'gz', 'xz'].includes(ext)) {
+        return '📦'
+      }
+      if (/^(xls|xlsx|csv|ods)$/.test(ext) || t.includes('spreadsheet')) return '📊'
+      if (/^(doc|docx|rtf)$/.test(ext) || t.includes('word')) return '📝'
+      if (/^(ppt|pptx|key)$/.test(ext) || t.includes('presentation')) return '📽️'
+      if (
+        /^(js|ts|tsx|jsx|mjs|json|py|go|rs|java|c|h|cpp|css|html|sh|ps1|bat|yml|yaml|toml|md)$/.test(
+          ext,
+        )
+      ) {
+        return '💻'
+      }
+      if (/^application\/(json|xml|javascript)/.test(t)) return '💻'
+      return '📄'
+    }
+
     // ───────────────────────── 样式 ─────────────────────────
 
     const LINE = '1px solid rgba(128,128,128,0.28)'
@@ -545,7 +594,7 @@ window.__ModuleLoader__.load({
             /* 非 JSON */
           }
           if (!res.ok) {
-            setErr(up && up.error === 'too-large' ? '文件太大（上限 8 MB）' : '上传失败')
+            setErr(up && up.error === 'too-large' ? '文件太大（上限 50 MB）' : '上传失败')
             return
           }
           const isImage = String(file.type || '').startsWith('image/')
@@ -975,24 +1024,40 @@ window.__ModuleLoader__.load({
                         content = h('img', {
                           src: auth.server + b.url,
                           alt: b.caption || '图片',
-                          style: {
-                            maxWidth: '100%',
-                            maxHeight: '360px',
-                            borderRadius: '10px',
-                            display: 'block',
-                          },
+                          style: MEDIA_STYLE,
                         })
                       } else if (kind === 'file') {
-                        content = h(
-                          'a',
-                          {
-                            href: auth.server + b.url,
-                            target: '_blank',
-                            rel: 'noreferrer',
-                            style: { color: 'inherit', textDecoration: 'underline' },
-                          },
-                          (b.name || '附件') + '  ' + kbText(b.size),
-                        )
+                        const t = String(b.type || '')
+                        const src = auth.server + b.url
+                        if (t.startsWith('image/')) {
+                          content = h('img', { src, alt: b.name || '图片', style: MEDIA_STYLE })
+                        } else if (t.startsWith('video/')) {
+                          content = h('video', { src, controls: true, style: MEDIA_STYLE })
+                        } else if (t.startsWith('audio/')) {
+                          content = h('audio', { src, controls: true, style: { maxWidth: '100%' } })
+                        } else {
+                          content = h(
+                            'a',
+                            {
+                              href: src,
+                              target: '_blank',
+                              rel: 'noreferrer',
+                              download: b.name || undefined,
+                              style: FILE_CARD,
+                            },
+                            h('span', { style: { fontSize: '24px', lineHeight: 1 } }, fileIcon(t, b.name)),
+                            h(
+                              'span',
+                              { style: { display: 'flex', flexDirection: 'column', minWidth: 0 } },
+                              h('span', { style: { textDecoration: 'underline' } }, b.name || '附件'),
+                              h(
+                                'span',
+                                { style: { fontSize: '11px', opacity: 0.7 } },
+                                (b.type || '未知类型') + ' · ' + kbText(b.size),
+                              ),
+                            ),
+                          )
+                        }
                       } else {
                         content = h('span', null, b.text || '')
                       }
@@ -1079,7 +1144,7 @@ window.__ModuleLoader__.load({
                       padding: '6px 10px',
                       ...(!active || uploading ? S.btnDisabled : null),
                     },
-                    title: '发送图片或文件（≤8 MB）',
+                    title: '发送图片或文件（任意类型，≤50 MB）',
                     disabled: !active || uploading,
                     onClick: () => fileRef.current && fileRef.current.click(),
                   },
