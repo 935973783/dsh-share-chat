@@ -104,6 +104,21 @@ window.__ModuleLoader__.load({
       return code || (err && err.message) || '出错了'
     }
 
+    /** 表情面板里的一批常用表情（unicode，直接当文字发） */
+    const EMOJIS = [
+      '😀', '😄', '😁', '😂', '🤣', '😊', '😍', '🤔', '😅', '😭',
+      '😡', '😱', '🥳', '😴', '🤤', '🤝', '👍', '👎', '👏', '🙏',
+      '💪', '🔥', '✨', '🎉', '❤️', '💔', '💡', '✅', '❌', '⚠️',
+      '🐳', '🐱', '🐶', '🍜', '☕', '🌙', '☀️', '🚀', '👀', '🤯',
+    ]
+
+    function kbText(size) {
+      const n = Number(size) || 0
+      if (n < 1024) return n + ' B'
+      if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB'
+      return (n / 1024 / 1024).toFixed(1) + ' MB'
+    }
+
     // ───────────────────────── 样式 ─────────────────────────
 
     const LINE = '1px solid rgba(128,128,128,0.28)'
@@ -490,6 +505,62 @@ window.__ModuleLoader__.load({
       const [newFriend, setNewFriend] = useState('')
       const [err, setErr] = useState('')
       const [sending, setSending] = useState(false)
+      const [emojiOpen, setEmojiOpen] = useState(false)
+      const [uploading, setUploading] = useState(false)
+      const fileRef = useRef(null)
+
+      /** 上次之后的新消息，拉一次并追加 */
+      const pull = async () => {
+        const r = await api(auth.server, '/api/messages?since=' + cursorRef.current, {
+          token: auth.token,
+        })
+        if (r.messages && r.messages.length) {
+          cursorRef.current = r.cursor
+          setMessages((prev) => prev.concat(r.messages))
+        }
+      }
+
+      /** 选中的文件：上传 → 发消息 */
+      const uploadAndSend = async (file) => {
+        if (!active || !file) return
+        setUploading(true)
+        setErr('')
+        try {
+          const buf = await file.arrayBuffer()
+          const res = await fetch(auth.server + '/api/upload', {
+            method: 'POST',
+            headers: {
+              authorization: 'Bearer ' + auth.token,
+              'content-type': file.type || 'application/octet-stream',
+              'x-filename': encodeURIComponent(file.name || ''),
+            },
+            body: buf,
+          })
+          let up = null
+          try {
+            up = await res.json()
+          } catch {
+            /* 非 JSON */
+          }
+          if (!res.ok) {
+            setErr(up && up.error === 'too-large' ? '文件太大（上限 8 MB）' : '上传失败')
+            return
+          }
+          const isImage = String(file.type || '').startsWith('image/')
+          await api(auth.server, '/api/messages', {
+            method: 'POST',
+            token: auth.token,
+            body: isImage
+              ? { to: active, image: { uploadId: up.id } }
+              : { to: active, file: { uploadId: up.id } },
+          })
+          await pull()
+        } catch (e) {
+          setErr(friendly(e))
+        } finally {
+          setUploading(false)
+        }
+      }
       const [probe, setProbe] = useState(null)
       const [probeBusy, setProbeBusy] = useState(false)
       const [sessions, setSessions] = useState(null)
@@ -881,9 +952,11 @@ window.__ModuleLoader__.load({
                   ? h('div', { style: S.empty }, '还没有消息，说点什么')
                   : thread.map((m) => {
                       const mine = m.from === auth.id
-                      const isSnap = !!(m.body && m.body.kind === 'snapshot')
-                      // 快照卡片自己带边框，不要再套一层彩色气泡
-                      const shell = isSnap
+                      const b = m.body || {}
+                      const kind = b.kind || 'text'
+                      // 快照卡片、图片自己带形状，不要再套一层彩色气泡
+                      const bare = kind === 'snapshot' || kind === 'image'
+                      const shell = bare
                         ? {
                             alignSelf: mine ? 'flex-end' : 'flex-start',
                             maxWidth: '88%',
@@ -892,12 +965,40 @@ window.__ModuleLoader__.load({
                             alignItems: mine ? 'flex-end' : 'flex-start',
                           }
                         : bubble(mine)
+
+                      let content
+                      if (kind === 'snapshot') {
+                        content = h(SnapshotCard, { snapshotId: b.snapshotId, auth })
+                      } else if (kind === 'image') {
+                        content = h('img', {
+                          src: auth.server + b.url,
+                          alt: b.caption || '图片',
+                          style: {
+                            maxWidth: '100%',
+                            maxHeight: '360px',
+                            borderRadius: '10px',
+                            display: 'block',
+                          },
+                        })
+                      } else if (kind === 'file') {
+                        content = h(
+                          'a',
+                          {
+                            href: auth.server + b.url,
+                            target: '_blank',
+                            rel: 'noreferrer',
+                            style: { color: 'inherit', textDecoration: 'underline' },
+                          },
+                          (b.name || '附件') + '  ' + kbText(b.size),
+                        )
+                      } else {
+                        content = h('span', null, b.text || '')
+                      }
+
                       return h(
                         'div',
                         { key: m.seq, style: shell },
-                        isSnap
-                          ? h(SnapshotCard, { snapshotId: m.body.snapshotId, auth })
-                          : h('span', null, (m.body && m.body.text) || ''),
+                        content,
                         h(
                           'div',
                           {
@@ -917,32 +1018,101 @@ window.__ModuleLoader__.load({
               'div',
               {
                 style: {
-                  ...S.bar,
-                  borderBottom: 'none',
                   borderTop: LINE,
+                  flex: '0 0 auto',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '6px',
+                  paddingTop: '8px',
+                  paddingBottom: '8px',
                   paddingLeft: 'max(18px, calc((100% - 820px) / 2))',
                   paddingRight: 'max(18px, calc((100% - 820px) / 2))',
                 },
               },
-              h('textarea', {
-                style: S.composer,
-                placeholder: active ? 'Enter 发送，Shift+Enter 换行' : '先选一个好友',
-                value: draft,
-                disabled: !active,
-                onChange: (e) => setDraft(e.target.value),
-                onKeyDown: keyDown,
-              }),
+              emojiOpen
+                ? h(
+                    'div',
+                    {
+                      style: {
+                        display: 'flex',
+                        flexWrap: 'wrap',
+                        gap: '2px',
+                        maxHeight: '110px',
+                        overflowY: 'auto',
+                        border: '1px solid rgba(128,128,128,0.28)',
+                        borderRadius: '10px',
+                        padding: '6px',
+                      },
+                    },
+                    EMOJIS.map((em) =>
+                      h(
+                        'button',
+                        {
+                          key: em,
+                          style: { ...S.btn, border: 'none', padding: '2px 5px', fontSize: '18px' },
+                          onClick: () => setDraft((d) => d + em),
+                        },
+                        em,
+                      ),
+                    ),
+                  )
+                : null,
               h(
-                'button',
-                {
-                  style: {
-                    ...S.btnPrimary,
-                    ...(!active || sending ? S.btnDisabled : null),
+                'div',
+                { style: { display: 'flex', alignItems: 'flex-end', gap: '8px' } },
+                h(
+                  'button',
+                  {
+                    style: { ...S.btn, padding: '6px 10px' },
+                    title: '表情',
+                    onClick: () => setEmojiOpen((v) => !v),
                   },
-                  disabled: !active || sending,
-                  onClick: send,
-                },
-                sending ? '发送中' : '发送',
+                  '😀',
+                ),
+                h(
+                  'button',
+                  {
+                    style: {
+                      ...S.btn,
+                      padding: '6px 10px',
+                      ...(!active || uploading ? S.btnDisabled : null),
+                    },
+                    title: '发送图片或文件（≤8 MB）',
+                    disabled: !active || uploading,
+                    onClick: () => fileRef.current && fileRef.current.click(),
+                  },
+                  uploading ? '…' : '📎',
+                ),
+                h('input', {
+                  ref: fileRef,
+                  type: 'file',
+                  style: { display: 'none' },
+                  onChange: (e) => {
+                    const f = e.target.files && e.target.files[0]
+                    if (f) uploadAndSend(f)
+                    e.target.value = ''
+                  },
+                }),
+                h('textarea', {
+                  style: S.composer,
+                  placeholder: active ? 'Enter 发送，Shift+Enter 换行' : '先选一个好友',
+                  value: draft,
+                  disabled: !active,
+                  onChange: (e) => setDraft(e.target.value),
+                  onKeyDown: keyDown,
+                }),
+                h(
+                  'button',
+                  {
+                    style: {
+                      ...S.btnPrimary,
+                      ...(!active || sending ? S.btnDisabled : null),
+                    },
+                    disabled: !active || sending,
+                    onClick: send,
+                  },
+                  sending ? '发送中' : '发送',
+                ),
               ),
             ),
           ),
