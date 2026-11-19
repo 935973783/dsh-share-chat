@@ -1,0 +1,10 @@
+{
+  "meta": {
+    "title": "Social",
+    "description": "Chat with friends inside the conversation view and send them DSH conversation snapshots. Messages stay on your own server.",
+    "detail": "docs/DETAIL.md"
+  },
+  "view": {
+    "label": "Social"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "meta": {
+    "title": "社交",
+    "description": "在对话流里和好友聊天，把 DSH 的对话快照发给对方。登录后可直接与好友私聊；消息内容留在你自己的服务器上。",
+    "detail": "docs/DETAIL.md"
+  },
+  "view": {
+    "label": "社交"
+  }
+}
