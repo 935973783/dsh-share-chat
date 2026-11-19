@@ -1,8 +1,10 @@
 {
   "name": "@local/dsh-share-chat",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "type": "module",
+  "license": "MIT",
+  "keywords": ["dsh-plugin", "chat", "social", "share", "snapshot"],
   "description": "Social chat inside the DSH conversation view: accounts, friends, messages, and shared session snapshots.",
   "exports": {
     ".": "./index.js",
@@ -17,6 +19,7 @@
     "locale/*.json",
     "docs",
     "README.md",
+    "LICENSE",
     "icon.svg"
   ],
   "dsh": {
