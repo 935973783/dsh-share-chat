@@ -157,10 +157,12 @@ window.__ModuleLoader__.load({
         gap: '6px',
         background: 'rgba(128,128,128,0.045)',
       },
-      main: { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' },
+      main: { flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' },
       list: {
         flex: 1,
         minWidth: 0,
+        // flex 子项必须能收缩，否则它撑到内容高度，滚轮就滚不动列表了
+        minHeight: 0,
         overflowY: 'auto',
         // 永远预留滚动条位置：消息变多时宽度不会突然缩一截
         scrollbarGutter: 'stable',
