@@ -112,7 +112,10 @@ window.__ModuleLoader__.load({
         display: 'flex',
         flexDirection: 'column',
         height: '100%',
+        width: '100%',
         minHeight: 0,
+        minWidth: 0,
+        overflow: 'hidden',
         color: 'inherit',
         font: 'inherit',
         fontSize: '13px',
@@ -142,7 +145,11 @@ window.__ModuleLoader__.load({
       main: { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' },
       list: {
         flex: 1,
+        minWidth: 0,
         overflowY: 'auto',
+        // 永远预留滚动条位置：消息变多时宽度不会突然缩一截
+        scrollbarGutter: 'stable',
+        overscrollBehavior: 'contain',
         paddingTop: '18px',
         paddingBottom: '18px',
         paddingLeft: 'max(18px, calc((100% - 820px) / 2))',
@@ -195,6 +202,9 @@ window.__ModuleLoader__.load({
         cursor: 'pointer',
         font: 'inherit',
         whiteSpace: 'nowrap',
+        textAlign: 'center',
+        // 固定宽度：发送 / 发送中 字数不同时不跳
+        minWidth: '76px',
       },
       btnDisabled: { opacity: 0.45, cursor: 'default' },
       friend: {
@@ -1562,11 +1572,14 @@ window.__ModuleLoader__.load({
         {
           style: {
             height: '100%',
+            width: '100%',
             minHeight: 0,
+            minWidth: 0,
             display: 'flex',
             flexDirection: 'column',
             paddingTop: 'var(--dsh-frame-top-clearance, 0px)',
             boxSizing: 'border-box',
+            overflow: 'hidden',
           },
         },
         h(SocialView),
