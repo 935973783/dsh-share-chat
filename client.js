@@ -330,9 +330,24 @@ window.__ModuleLoader__.load({
       return x
     }
 
-    function avatar(name, id, size) {
+    /** 当前 relay 地址，头像 URL 要拼它（插件页面和 relay 不同源） */
+    let avatarBase = ''
+
+    function avatar(name, id, size, avatarId, isGroup) {
       const sz = size || 30
+      if (avatarId) {
+        return h('img', {
+          className: 'sc-avatar',
+          src: avatarBase + '/f/' + avatarId,
+          alt: String(name || id || ''),
+          loading: 'lazy',
+          style: { width: sz + 'px', height: sz + 'px', objectFit: 'cover', display: 'block' },
+        })
+      }
       const hue = hueOf(id || name)
+      const initial = isGroup
+        ? '👥'
+        : String(name || id || '?').trim().charAt(0).toUpperCase()
       return h(
         'span',
         {
@@ -349,7 +364,7 @@ window.__ModuleLoader__.load({
               ' 58% 44%))',
           },
         },
-        String(name || id || '?').trim().charAt(0).toUpperCase(),
+        initial,
       )
     }
 
@@ -612,7 +627,9 @@ window.__ModuleLoader__.load({
 
     function ChatPanel(props) {
       const auth = props.auth
+      avatarBase = auth.server
       const [friends, setFriends] = useState([])
+      const [groups, setGroups] = useState([])
       const [active, setActive] = useState(null)
       const [messages, setMessages] = useState([])
       const [draft, setDraft] = useState('')
@@ -621,6 +638,7 @@ window.__ModuleLoader__.load({
       const [sending, setSending] = useState(false)
       const [uploading, setUploading] = useState(false)
       const [emojiOpen, setEmojiOpen] = useState(false)
+      const [myAvatar, setMyAvatar] = useState('')
 
       const cursorRef = useRef(0)
       const listRef = useRef(null)
@@ -636,6 +654,7 @@ window.__ModuleLoader__.load({
         try {
           const r = await api(auth.server, '/api/friends', { token: auth.token })
           setFriends(r.friends || [])
+          setGroups(r.groups || [])
           return r.friends || []
         } catch (e) {
           setErr(friendly(e))
@@ -648,6 +667,11 @@ window.__ModuleLoader__.load({
         loadFriends().then((list) => {
           if (alive && list.length && !active) setActive(list[0].id)
         })
+        api(auth.server, '/api/me', { token: auth.token })
+          .then((me) => {
+            if (alive && me && me.avatar) setMyAvatar(me.avatar)
+          })
+          .catch(() => {})
         return () => {
           alive = false
         }
@@ -685,10 +709,17 @@ window.__ModuleLoader__.load({
             const f = await api(auth.server, '/api/friends', { token: auth.token })
             if (!alive) return
             const list = f.friends || []
-            const key = list.map((x) => x.id + ':' + (x.displayName || '')).join('|')
+            const glist = f.groups || []
+            const key =
+              list.map((x) => x.id + ':' + (x.displayName || '') + ':' + (x.avatar || '')).join('|') +
+              '§' +
+              glist
+                .map((g) => g.id + ':' + g.name + ':' + (g.avatar || '') + ':' + (g.members || []).length)
+                .join('|')
             if (key !== friendsKeyRef.current) {
               friendsKeyRef.current = key
               setFriends(list)
+              setGroups(glist)
               if (!activeRef.current && list.length) setActive(list[0].id)
             }
           } catch (e) {
@@ -795,6 +826,89 @@ window.__ModuleLoader__.load({
       }
 
       /* 好友列表里的「最后一条」摘要 */
+      /** 建群 / 拉人 / 换自己的头像 */
+      const createGroup = async () => {
+        let name = ''
+        try {
+          name = (window.prompt('群名？') || '').trim()
+        } catch (e) {
+          name = ''
+        }
+        if (!name) return
+        setErr('')
+        try {
+          const r = await api(auth.server, '/api/groups', {
+            method: 'POST',
+            token: auth.token,
+            body: { name },
+          })
+          await loadFriends()
+          setActive('g:' + r.group.id)
+          cursorRef.current = 0
+          setMessages([])
+        } catch (e) {
+          setErr(friendly(e))
+        }
+      }
+
+      const addMember = async () => {
+        if (!active || active.indexOf('g:') !== 0) return
+        let id = ''
+        try {
+          id = (window.prompt('把谁的 ID 拉进群？') || '').trim()
+        } catch (e) {
+          id = ''
+        }
+        if (!id) return
+        setErr('')
+        try {
+          await api(auth.server, '/api/groups/' + active.slice(2) + '/members', {
+            method: 'POST',
+            token: auth.token,
+            body: { id },
+          })
+          await loadFriends()
+        } catch (e) {
+          setErr(friendly(e))
+        }
+      }
+
+      const avatarInputRef = useRef(null)
+      const uploadAvatar = async (file) => {
+        if (!file) return
+        setErr('')
+        try {
+          const buf = await file.arrayBuffer()
+          const res = await fetch(auth.server + '/api/upload', {
+            method: 'POST',
+            headers: {
+              authorization: 'Bearer ' + auth.token,
+              'content-type': file.type || 'application/octet-stream',
+              'x-filename': encodeURIComponent(file.name || ''),
+            },
+            body: buf,
+          })
+          let up = null
+          try {
+            up = await res.json()
+          } catch {
+            up = null
+          }
+          if (!res.ok || !up) {
+            setErr('头像上传失败')
+            return
+          }
+          await api(auth.server, '/api/avatar', {
+            method: 'POST',
+            token: auth.token,
+            body: { uploadId: up.id },
+          })
+          setMyAvatar(up.id)
+        } catch (e) {
+          setErr(friendly(e))
+        }
+      }
+
       const lastOf = (fid) => {
         for (let i = messages.length - 1; i >= 0; i--) {
           const m = messages[i]
@@ -809,6 +923,32 @@ window.__ModuleLoader__.load({
         if (b.kind === 'image') return '🖼 图片'
         if (b.kind === 'file') return '📎 ' + (b.name || '文件')
         return String(b.text || '')
+      }
+
+      /** 会话 = 好友 + 群，统一成一种形状给侧栏和标题用 */
+      const convs = [
+        ...friends.map((f) => ({
+          kind: 'dm',
+          key: f.id,
+          title: f.displayName || f.id,
+          avatar: f.avatar || '',
+          members: [],
+        })),
+        ...groups.map((g) => ({
+          kind: 'group',
+          key: 'g:' + g.id,
+          title: g.name,
+          avatar: g.avatar || '',
+          members: g.members || [],
+        })),
+      ]
+      const current = convs.find((c) => c.key === active) || null
+      const isGroup = !!(current && current.kind === 'group')
+      const nameOf = (id) => {
+        const mem = current && (current.members || []).find((x) => x.id === id)
+        if (mem) return mem.displayName || id
+        const dm = convs.find((c) => c.kind === 'dm' && c.key === id)
+        return dm ? dm.title : id
       }
 
       const thread = messages.filter((m) => m.from === active || m.to === active)
@@ -860,6 +1000,9 @@ window.__ModuleLoader__.load({
         return h(
           'div',
           { key: m.seq, className: 'sc-msg' + (mine ? ' mine' : '') },
+          isGroup && !mine
+            ? h('div', { className: 'sc-time', style: { marginBottom: '2px' } }, nameOf(m.from))
+            : null,
           content,
           h('div', { className: 'sc-time' }, clockText(m.at)),
         )
@@ -872,11 +1015,31 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { className: 'sc-chat-head' },
-          avatar(auth.displayName || auth.id, auth.id, 30),
+          avatar(auth.displayName || auth.id, auth.id, 30, myAvatar, false),
+          h('input', {
+            ref: avatarInputRef,
+            type: 'file',
+            accept: 'image/*',
+            style: { display: 'none' },
+            onChange: (e) => {
+              const f = e.target.files && e.target.files[0]
+              if (f) uploadAvatar(f)
+              e.target.value = ''
+            },
+          }),
           h(
             'div',
             { style: { minWidth: 0 } },
-            h('div', { className: 'sc-chat-name' }, '@' + (auth.displayName || auth.id)),
+            h(
+              'div',
+              {
+                className: 'sc-chat-name',
+                style: { cursor: 'pointer' },
+                title: '点一下换我的头像',
+                onClick: () => avatarInputRef.current && avatarInputRef.current.click(),
+              },
+              '@' + (auth.displayName || auth.id),
+            ),
             h('div', { className: 'sc-chat-sub' }, auth.server.replace(/^https?:\/\//, '')),
           ),
           h('span', { className: 'sc-grow' }),
@@ -909,7 +1072,7 @@ window.__ModuleLoader__.load({
           h(
             'div',
             { className: 'sc-side' },
-            h('div', { className: 'sc-side-title' }, '好友'),
+            h('div', { className: 'sc-side-title' }, '会话'),
             h(
               'div',
               { className: 'sc-add' },
@@ -923,27 +1086,40 @@ window.__ModuleLoader__.load({
                 },
               }),
               h('button', { className: 'sc-btn sc-btn-sm', onClick: addFriend }, '添加'),
+              h('button', { className: 'sc-btn sc-btn-sm', onClick: createGroup, title: '建一个群' }, '建群'),
             ),
             h(
               'div',
               { className: 'sc-friends' },
-              friends.length === 0
-                ? emptyState('👥', '还没有好友', '在上面输入对方 ID 加一个')
-                : friends.map((f) =>
+              convs.length === 0
+                ? emptyState('👥', '还没有会话', '在上面加好友，或者点「建群」')
+                : convs.map((c) =>
                     h(
                       'div',
                       {
-                        key: f.id,
-                        className: 'sc-friend' + (active === f.id ? ' on' : ''),
-                        onClick: () => setActive(f.id),
-                        title: f.id,
+                        key: c.key,
+                        className: 'sc-friend' + (active === c.key ? ' on' : ''),
+                        onClick: () => {
+                          setActive(c.key)
+                          cursorRef.current = 0
+                          setMessages([])
+                        },
+                        title: c.key,
                       },
-                      avatar(f.displayName || f.id, f.id, 28),
+                      avatar(c.title, c.key, 28, c.avatar, c.kind === 'group'),
                       h(
                         'div',
                         { className: 'sc-friend-main' },
-                        h('div', { className: 'sc-friend-name' }, f.displayName || f.id),
-                        h('div', { className: 'sc-friend-last' }, previewOf(lastOf(f.id)) || '还没有消息'),
+                        h(
+                          'div',
+                          { className: 'sc-friend-name' },
+                          c.title + (c.kind === 'group' ? '  (' + c.members.length + ')' : ''),
+                        ),
+                        h(
+                          'div',
+                          { className: 'sc-friend-last' },
+                          previewOf(lastOf(c.key)) || '还没有消息',
+                        ),
                       ),
                     ),
                   ),
@@ -952,6 +1128,33 @@ window.__ModuleLoader__.load({
           h(
             'div',
             { className: 'sc-main' },
+            current
+              ? h(
+                  'div',
+                  {
+                    className: 'sc-side-title',
+                    style: {
+                      padding: '10px 14px 4px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                    },
+                  },
+                  h(
+                    'span',
+                    null,
+                    current.title + (isGroup ? '  ·  ' + current.members.length + ' 人' : ''),
+                  ),
+                  h('span', { className: 'sc-grow' }),
+                  isGroup
+                    ? h(
+                        'button',
+                        { className: 'sc-btn sc-btn-sm', onClick: addMember, title: '拉人进群' },
+                        '＋人',
+                      )
+                    : null,
+                )
+              : null,
             h(
               'div',
               { className: 'sc-thread', ref: listRef },
