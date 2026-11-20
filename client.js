@@ -961,16 +961,21 @@ window.__ModuleLoader__.load({
         if (kind === 'snapshot') {
           content = h(SnapshotCard, { snapshotId: b.snapshotId, auth })
         } else if (kind === 'image') {
-          content = h('img', {
-            className: 'sc-msg-img',
-            src: auth.server + b.url,
-            alt: b.caption || '图片',
-          })
+          const src = auth.server + b.url
+          content = h(
+            'a',
+            { href: src + '?download=1', target: '_blank', rel: 'noreferrer', title: '点开保存' },
+            h('img', { className: 'sc-msg-img', src, alt: b.caption || '图片' }),
+          )
         } else if (kind === 'file') {
           const t = String(b.type || '')
           const src = auth.server + b.url
           if (t.startsWith('image/')) {
-            content = h('img', { className: 'sc-msg-img', src, alt: b.name || '图片' })
+            content = h(
+              'a',
+              { href: src + '?download=1', target: '_blank', rel: 'noreferrer', title: '点开保存' },
+              h('img', { className: 'sc-msg-img', src, alt: b.name || '图片' }),
+            )
           } else if (t.startsWith('video/')) {
             content = h('video', { src, controls: true, style: MEDIA_STYLE })
           } else if (t.startsWith('audio/')) {
@@ -980,7 +985,7 @@ window.__ModuleLoader__.load({
               'a',
               {
                 className: 'sc-file',
-                href: src,
+                href: src + '?download=1',
                 target: '_blank',
                 rel: 'noreferrer',
                 download: b.name || undefined,
@@ -990,7 +995,11 @@ window.__ModuleLoader__.load({
                 'span',
                 { className: 'sc-file-main' },
                 h('span', { className: 'sc-file-name' }, b.name || '附件'),
-                h('span', { className: 'sc-file-size' }, (b.type || '未知类型') + ' · ' + kbText(b.size)),
+                h(
+                  'span',
+                  { className: 'sc-file-size' },
+                  (b.type || '未知类型') + ' · ' + kbText(b.size) + ' · 点击下载',
+                ),
               ),
             )
           }
