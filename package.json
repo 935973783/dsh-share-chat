@@ -1,11 +1,24 @@
 {
-  "name": "@local/dsh-share-chat",
-  "version": "0.1.6",
-  "private": true,
+  "name": "dsh-share-chat",
+  "version": "0.3.1",
   "type": "module",
   "license": "MIT",
-  "keywords": ["dsh-plugin", "chat", "social", "share", "snapshot"],
-  "description": "Social chat inside the DSH conversation view: accounts, friends, messages, and shared session snapshots.",
+  "keywords": [
+    "dsh-plugin",
+    "chat",
+    "social",
+    "share",
+    "snapshot",
+    "minigame",
+    "meeting",
+    "webrtc"
+  ],
+  "description": "Social chat, calls and shared session snapshots inside the DSH conversation view, with an embedded fish-game mini game.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://gitee.com/laughing-faith/dsh-share-chat.git"
+  },
+  "homepage": "https://gitee.com/laughing-faith/dsh-share-chat#readme",
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
@@ -18,16 +31,22 @@
     "cordis.patch.yml",
     "locale/*.json",
     "docs",
+    "cli",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE",
     "icon.svg"
   ],
   "dsh": {
-    "bundle": { "patch": "./cordis.patch.yml" },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
     "client": {
       "platform": "web",
       "immediately": true,
-      "inject": ["@deepseek-ai/dsh-client-ui-conversation"]
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ]
     }
   }
 }
