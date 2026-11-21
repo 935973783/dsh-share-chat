@@ -5717,6 +5717,7 @@ window.__ModuleLoader__.load({
         '<div style="display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid #e3eaf4;flex:0 0 auto">' +
         '<b style="font-size:14px">🧩 杀手数独</b>' +
         '<span data-day style="font-size:12px;color:#7b8ca6"></span>' +
+        '<span data-stars style="font-size:12px;color:#d99a1f;font-weight:600"></span>' +
         '<span data-timer style="font-size:12px;color:#7b8ca6;margin-left:auto"></span>' +
         '<button data-close style="padding:5px 9px;border-radius:8px;border:1px solid #dbe4f0;background:#fff;cursor:pointer">✕</button>' +
         '</div>' +
@@ -5757,6 +5758,12 @@ window.__ModuleLoader__.load({
       let done = false
       let pencilMode = false
       let dragSel = null
+      let myStars = 0
+      const starsFor = (d) => Math.min(5, Math.max(1, Math.ceil((Number(d) || 1) / 2)))
+      const renderStars = () => {
+        const el = $('[data-stars]')
+        if (el) el.textContent = myStars > 0 ? '★ ' + myStars : ''
+      }
       // 被玩家判定为「不可能」的组合：key = c<笼号>:<数字> 或 k<和>-<格数>:<数字>
       let offCombos = new Set()
 
@@ -6121,8 +6128,30 @@ window.__ModuleLoader__.load({
         const g = values()
         if (g.every((x) => x > 0) && conflicts().size === 0) {
           done = true
-          window.clearInterval(timer)
-          onToast('解出来了 🎉')
+          stopClock()
+          awardStars()
+        }
+      }
+
+      /** 通关：难度 1-10 → 1-5 星，同一盘每天只算一次 */
+      let awarding = false
+      const awardStars = async () => {
+        if (awarding) return
+        awarding = true
+        try {
+          const pz = puzzles[curIdx] || {}
+          const r = await api(auth.server, '/api/killer/solve', {
+            method: 'POST',
+            token: auth.token,
+            body: { day, number: pz.number, difficulty: pz.difficulty || 1 },
+          })
+          myStars = Number(r.total) || 0
+          renderStars()
+          onToast(r.already ? '这盘已经算过星星了' : '解出来了 🎉 +' + r.stars + ' 星')
+        } catch (e) {
+          onToast('解出来了 🎉（星星没记上）')
+        } finally {
+          awarding = false
         }
       }
 
@@ -6356,10 +6385,11 @@ window.__ModuleLoader__.load({
         bar.style.cssText = 'display:flex;gap:6px;justify-content:center;padding:8px 0 0'
         puzzles.forEach((pz, idx) => {
           const b = document.createElement('button')
-          b.textContent = String(idx + 1)
-          b.title = '#' + pz.number
+          const st = starsFor(pz.difficulty)
+          b.textContent = String(idx + 1) + (pz.difficulty ? ' · 难度' + pz.difficulty : '')
+          b.title = '#' + pz.number + (pz.difficulty ? ' 难度 ' + pz.difficulty + '/10' : '') + ' 通关得 ' + st + ' 星'
           b.style.cssText =
-            'min-width:34px;height:26px;border-radius:8px;border:1px solid ' +
+            'padding:0 10px;height:27px;border-radius:8px;border:1px solid ' +
             (idx === curIdx ? '#7ea8e0' : '#dbe4f0') +
             ';background:' +
             (idx === curIdx ? '#e6f0ff' : '#fff') +
@@ -6376,6 +6406,8 @@ window.__ModuleLoader__.load({
         .then((r) => {
           day = r.day || ''
           curSource = r.source || ''
+          myStars = Number(r.myStars) || 0
+          renderStars()
           puzzles = Array.isArray(r.puzzles) ? r.puzzles : []
           if (!puzzles.length) {
             bodyEl.textContent = '今天没有题目'
