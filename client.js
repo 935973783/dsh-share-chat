@@ -1073,6 +1073,19 @@ window.__ModuleLoader__.load({
           'flex-direction:column',
           'gap:2px',
         ].join(';')
+
+        let closed = false
+        const close = () => {
+          if (closed) return
+          closed = true
+          menu.remove()
+          document.removeEventListener('mousedown', onDown, true)
+        }
+        // 点菜单外面才关；点菜单里的项交给按钮自己处理
+        const onDown = (ev) => {
+          if (!menu.contains(ev.target)) close()
+        }
+
         const mk = (label, fn, danger) => {
           const b = document.createElement('button')
           b.textContent = label
@@ -1083,15 +1096,16 @@ window.__ModuleLoader__.load({
           b.addEventListener('mouseenter', () => (b.style.background = 'rgba(255,255,255,.1)'))
           b.addEventListener('mouseleave', () => (b.style.background = 'transparent'))
           b.addEventListener('click', () => {
-            menu.remove()
+            close()
             fn()
           })
           return b
         }
+
         menu.appendChild(
           mk('打开聊天', () => {
-            setActive(conv.key)
             setSideTab('chats')
+            setActive(conv.key)
             if (conv.hidden) hideChat(conv.key, false)
           }),
         )
@@ -1101,23 +1115,24 @@ window.__ModuleLoader__.load({
           menu.appendChild(mk('不显示该聊天', () => hideChat(conv.key, true), true))
         }
         document.body.appendChild(menu)
-        const close = () => {
-          menu.remove()
-          document.removeEventListener('mousedown', close, true)
-        }
-        setTimeout(() => document.addEventListener('mousedown', close, true), 0)
+        setTimeout(() => {
+          if (!closed) document.addEventListener('mousedown', onDown, true)
+        }, 0)
       }
 
       /** 不显示 / 恢复某个会话（只影响列表，好友关系不动） */
       const hideChat = async (key, hidden) => {
         try {
+          // 先本地生效，界面立刻反应；失败再回滚
+          if (hidden) setHiddenChats((prev) => (prev.indexOf(key) >= 0 ? prev : prev.concat(key)))
+          else setHiddenChats((prev) => prev.filter((x) => x !== key))
+          if (hidden && activeRef.current === key) setActive(null)
           const r = await api(auth.server, '/api/hidden', {
             method: 'POST',
             token: auth.token,
             body: { key, hidden },
           })
           setHiddenChats(Array.isArray(r.hidden) ? r.hidden : [])
-          if (hidden && active === key) setActive(null)
         } catch (e) {
           setErr(friendly(e))
         }
