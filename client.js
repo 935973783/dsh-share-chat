@@ -5751,7 +5751,8 @@ window.__ModuleLoader__.load({
       let marks = [] // { v, p:[], u:[] }
       let selSet = new Set()
       let cells = []
-      let startedAt = 0
+      let baseMs = 0 // 之前累计的用时
+      let runFrom = 0 // 本次开始计时的时刻；0 = 停表状态
       let timer = null
       let done = false
       let pencilMode = false
@@ -5810,17 +5811,37 @@ window.__ModuleLoader__.load({
           writeJson(puzzleKey(), {
             marks: marks.map((m) => ({ v: m.v, p: m.p, u: m.u })),
             off: [...offCombos],
-            startedAt,
+            elapsed: currentMs(),
           })
         } catch (e) {}
       }
 
       const tickTimer = () => {
         window.clearInterval(timer)
-        if (!startedAt) return
+        if (!runFrom) return
         timer = window.setInterval(() => {
-          $('[data-timer]').textContent = fmt(Date.now() - startedAt)
+          $('[data-timer]').textContent = fmt(currentMs())
         }, 1000)
+      }
+
+      /** 当前累计用时（关窗后不再增长） */
+      const currentMs = () => baseMs + (runFrom ? Date.now() - runFrom : 0)
+
+      const startClock = () => {
+        if (runFrom) return
+        runFrom = Date.now()
+        tickTimer()
+      }
+
+      /** 停表：把本次这一段并入 baseMs */
+      const stopClock = () => {
+        if (runFrom) {
+          baseMs += Date.now() - runFrom
+          runFrom = 0
+        }
+        window.clearInterval(timer)
+        timer = null
+        $('[data-timer]').textContent = baseMs ? fmt(baseMs) : ''
       }
 
       const conflicts = () => {
@@ -6081,10 +6102,7 @@ window.__ModuleLoader__.load({
       }
 
       const touchStarted = () => {
-        if (!startedAt) {
-          startedAt = Date.now()
-          tickTimer()
-        }
+        startClock()
       }
 
       const put = (v) => {
@@ -6285,7 +6303,9 @@ window.__ModuleLoader__.load({
       window.addEventListener('keydown', onKey, true)
       $('[data-close]').addEventListener('click', () => {
         window.removeEventListener('keydown', onKey, true)
-        window.clearInterval(timer)
+        // 关窗前把这一段用时并进累计值，再存盘：再打开就是停表时的数字
+        stopClock()
+        save()
         wrap.remove()
       })
 
@@ -6303,7 +6323,8 @@ window.__ModuleLoader__.load({
         marks = blankMarks()
         selSet = new Set()
         done = false
-        startedAt = 0
+        baseMs = 0
+        runFrom = 0
         window.clearInterval(timer)
         $('[data-timer]').textContent = ''
         if (keepProgress) {
@@ -6315,8 +6336,11 @@ window.__ModuleLoader__.load({
               p: Array.isArray(m && m.p) ? m.p.slice() : [],
               u: Array.isArray(m && m.u) ? m.u.slice() : [],
             }))
-            startedAt = Number(saved.startedAt) || 0
-            if (startedAt) tickTimer()
+            baseMs = Number(saved.elapsed) || 0
+            if (baseMs) {
+              startClock()
+              $('[data-timer]').textContent = fmt(baseMs)
+            }
           }
         }
         $('[data-day]').textContent =
