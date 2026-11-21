@@ -5950,8 +5950,13 @@ window.__ModuleLoader__.load({
       api(auth.server, '/api/killer/today', { token: auth.token })
         .then((r) => {
           day = r.day || ''
-          cages = r.cages || []
-          $('[data-day]').textContent = day
+          const list = Array.isArray(r.puzzles) ? r.puzzles : []
+          const current = list[0] || { cages: [] }
+          cages = current.cages || []
+          $('[data-day]').textContent =
+            day + (current.number ? ' · #' + current.number : '') + (r.source === 'generated' ? ' · 自动出题' : '')
+          cageStart = new Set()
+          cageSum = new Map()
           cages.forEach((c) => {
             const start = Math.min(...c.cells)
             cageStart.add(start)
@@ -5968,6 +5973,37 @@ window.__ModuleLoader__.load({
             }
           }
           build()
+          // 有多盘（不同难度）就给一排切换
+          if (list.length > 1) {
+            const bar = document.createElement('div')
+            bar.style.cssText = 'display:flex;gap:6px;margin:0 0 8px;justify-content:center'
+            list.forEach((pz, idx) => {
+              const b = document.createElement('button')
+              b.textContent = String(idx + 1)
+              b.title = '#' + pz.number
+              b.style.cssText =
+                'width:30px;height:26px;border-radius:7px;border:1px solid #dbe4f0;background:' +
+                (idx === 0 ? '#e6f0ff' : '#fff') +
+                ';font:600 12px system-ui;cursor:pointer'
+              b.addEventListener('click', () => {
+                cages = pz.cages
+                cageStart = new Set()
+                cageSum = new Map()
+                cages.forEach((c) => {
+                  const start = Math.min(...c.cells)
+                  cageStart.add(start)
+                  cageSum.set(start, c.sum)
+                })
+                grid = new Array(81).fill(0)
+                done = false
+                sel = -1
+                $('[data-day]').textContent = day + ' · #' + pz.number
+                build()
+              })
+              bar.appendChild(b)
+            })
+            bodyEl.insertBefore(bar, bodyEl.firstChild)
+          }
         })
         .catch((e) => {
           bodyEl.textContent = '题目加载失败：' + friendly(e)
