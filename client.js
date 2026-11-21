@@ -6659,33 +6659,34 @@ window.__ModuleLoader__.load({
         owner = new Int8Array(81).fill(-1)
         cages.forEach((c, ci) => c.cells.forEach((i) => (owner[i] = ci)))
 
+        const CELL = 46
         const board = document.createElement('div')
         board.style.cssText =
-          'display:grid;grid-template-columns:repeat(9,46px);grid-template-rows:repeat(9,46px);border:2.5px solid #1f2a37;margin:0 auto;width:max-content'
+          'position:relative;display:grid;grid-template-columns:repeat(9,' +
+          CELL +
+          'px);grid-template-rows:repeat(9,' +
+          CELL +
+          'px);border:3px solid #1f2a37;margin:0 auto;width:max-content;background:#fbfcfe'
 
         cells = []
         for (let i = 0; i < 81; i++) {
-          const ci = owner[i]
-          const edge = (isBox, isCage) => {
-            if (isBox) return '2px solid #1f2a37'
-            if (isCage) return '1.5px dashed #7b93b5'
-            return '1px solid #e3eaf4'
-          }
-          const topBox = i < 9 || ROW(i) % 3 === 0
-          const leftBox = i % 9 === 0 || COL(i) % 3 === 0
-          const bottomBox = i >= 72 || ROW(i) % 3 === 2
-          const rightBox = i % 9 === 8 || COL(i) % 3 === 2
-          const topCage = i >= 9 && owner[i - 9] !== ci
-          const leftCage = i % 9 !== 0 && owner[i - 1] !== ci
-          const bottomCage = i < 72 && owner[i + 9] !== ci
-          const rightCage = i % 9 !== 8 && owner[i + 1] !== ci
+          const boxRight = i % 9 === 8 || COL(i) % 3 === 2
+          const boxBottom = i >= 72 || ROW(i) % 3 === 2
           const cell = document.createElement('div')
           cell.style.cssText = [
-            'position:relative', 'display:flex', 'align-items:center', 'justify-content:center',
-            'cursor:pointer', 'user-select:none',
-            'border-top:' + edge(topBox, topCage), 'border-left:' + edge(leftBox, leftCage),
-            'border-bottom:' + edge(bottomBox, bottomCage), 'border-right:' + edge(rightBox, rightCage),
-          ].join(';')
+            'position:relative',
+            'display:flex',
+            'align-items:center',
+            'justify-content:center',
+            'cursor:pointer',
+            'user-select:none',
+            'border-right:' + (boxRight ? '2px solid #1f2a37' : '1px solid #d9e1ec'),
+            'border-bottom:' + (boxBottom ? '2px solid #1f2a37' : '1px solid #d9e1ec'),
+            i % 9 === 8 ? 'border-right:none' : '',
+            i >= 72 ? 'border-bottom:none' : '',
+          ]
+            .filter(Boolean)
+            .join(';')
           cell.addEventListener('mousedown', (e) => {
             if (e.button !== 0) return
             e.preventDefault()
@@ -6704,6 +6705,36 @@ window.__ModuleLoader__.load({
           board.appendChild(cell)
           cells.push(cell)
         }
+
+        // 笼用一层 SVG 单独画虚线轮廓，和九宫格的实线分开
+        const NS = 'http://www.w3.org/2000/svg'
+        const svg = document.createElementNS(NS, 'svg')
+        svg.setAttribute('width', String(CELL * 9))
+        svg.setAttribute('height', String(CELL * 9))
+        svg.style.cssText = 'position:absolute;left:0;top:0;pointer-events:none;overflow:visible'
+        const seg = (x1, y1, x2, y2) => {
+          const l = document.createElementNS(NS, 'line')
+          l.setAttribute('x1', x1)
+          l.setAttribute('y1', y1)
+          l.setAttribute('x2', x2)
+          l.setAttribute('y2', y2)
+          l.setAttribute('stroke', '#7b93b5')
+          l.setAttribute('stroke-width', '1.7')
+          l.setAttribute('stroke-dasharray', '5 3')
+          l.setAttribute('stroke-linecap', 'round')
+          svg.appendChild(l)
+        }
+        for (let i = 0; i < 81; i++) {
+          const ci = owner[i]
+          const x = COL(i) * CELL
+          const y = ROW(i) * CELL
+          if (ROW(i) === 0 || owner[i - 9] !== ci) seg(x, y, x + CELL, y)
+          if (ROW(i) === 8 || owner[i + 9] !== ci) seg(x, y + CELL, x + CELL, y + CELL)
+          if (COL(i) === 0 || owner[i - 1] !== ci) seg(x, y, x, y + CELL)
+          if (COL(i) === 8 || owner[i + 1] !== ci) seg(x + CELL, y, x + CELL, y + CELL)
+        }
+        board.appendChild(svg)
+
         bodyEl.appendChild(board)
 
         const pad = document.createElement('div')
