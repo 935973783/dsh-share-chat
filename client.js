@@ -5832,10 +5832,20 @@ window.__ModuleLoader__.load({
         cells = []
         for (let i = 0; i < 81; i++) {
           const ci = owner[i]
-          const top = i < 9 || owner[i - 9] !== ci || ROW(i) % 3 === 0
-          const left = i % 9 === 0 || owner[i - 1] !== ci || COL(i) % 3 === 0
-          const bottom = i >= 72 || owner[i + 9] !== ci || ROW(i) % 3 === 2
-          const right = i % 9 === 8 || owner[i + 1] !== ci || COL(i) % 3 === 2
+          // 三种线：宫/外框用粗实线，笼的边界用虚线，其余是细实线
+          const edge = (isBox, isCage) => {
+            if (isBox) return '2px solid #1f2a37'
+            if (isCage) return '1.5px dashed #7b93b5'
+            return '1px solid #e3eaf4'
+          }
+          const topBox = i < 9 || ROW(i) % 3 === 0
+          const leftBox = i % 9 === 0 || COL(i) % 3 === 0
+          const bottomBox = i >= 72 || ROW(i) % 3 === 2
+          const rightBox = i % 9 === 8 || COL(i) % 3 === 2
+          const topCage = i >= 9 && owner[i - 9] !== ci
+          const leftCage = i % 9 !== 0 && owner[i - 1] !== ci
+          const bottomCage = i < 72 && owner[i + 9] !== ci
+          const rightCage = i % 9 !== 8 && owner[i + 1] !== ci
           const cell = document.createElement('div')
           cell.style.cssText = [
             'position:relative',
@@ -5844,10 +5854,10 @@ window.__ModuleLoader__.load({
             'justify-content:center',
             'cursor:pointer',
             'user-select:none',
-            'border-top:' + (top ? '2px solid #1f2a37' : '1px solid #dde5ef'),
-            'border-left:' + (left ? '2px solid #1f2a37' : '1px solid #dde5ef'),
-            'border-bottom:' + (bottom ? '2px solid #1f2a37' : '1px solid #dde5ef'),
-            'border-right:' + (right ? '2px solid #1f2a37' : '1px solid #dde5ef'),
+            'border-top:' + edge(topBox, topCage),
+            'border-left:' + edge(leftBox, leftCage),
+            'border-bottom:' + edge(bottomBox, bottomCage),
+            'border-right:' + edge(rightBox, rightCage),
           ].join(';')
           cell.addEventListener('click', () => select(i))
           board.appendChild(cell)
