@@ -1536,6 +1536,15 @@ window.__ModuleLoader__.load({
             },
             '🐳',
           ),
+          h(
+            'button',
+            {
+              className: 'sc-btn',
+              onClick: () => openMahjong({ auth, onToast: (m) => setErr(m) }),
+              title: '开一桌麻将（缺的位置机器人补）',
+            },
+            '🀄 麻将',
+          ),
           h('button', { className: 'sc-btn sc-btn-ghost', onClick: props.onLogout }, '退出'),
         ),
         /* 主体 */
@@ -5229,6 +5238,375 @@ window.__ModuleLoader__.load({
         host.remove()
         css.remove()
       }
+    }
+
+    /* ---------- 麻将 ---------- */
+    const MJ_SUITS = ['万', '条', '筒']
+    const MJ_RANKS = ['一', '二', '三', '四', '五', '六', '七', '八', '九']
+    const MJ_SUIT_COLOR = ['#c0392b', '#1e8449', '#1f5fa8']
+
+    function mjShort(t) {
+      return String((t % 9) + 1) + MJ_SUITS[Math.floor(t / 9)]
+    }
+
+    /** 一张牌：图片存在就用图（<kind>.png），没有就显示文字 */
+    function mjTileEl(base, t, size, opts) {
+      const o = opts || {}
+      const w = size || 34
+      const el = document.createElement(o.button ? 'button' : 'span')
+      el.style.cssText = [
+        'position:relative',
+        'display:inline-flex',
+        'align-items:center',
+        'justify-content:center',
+        'width:' + w + 'px',
+        'height:' + Math.round(w * 1.38) + 'px',
+        'border-radius:6px',
+        'background:#fffdf7',
+        'border:1px solid #e4d9c4',
+        'box-shadow:0 2px 0 #e4d9c4,0 3px 8px rgba(0,0,0,.12)',
+        'overflow:hidden',
+        'flex:0 0 auto',
+        'padding:0',
+        'font:700 ' + Math.max(10, Math.round(w * 0.4)) + 'px/1 system-ui,sans-serif',
+        'color:' + MJ_SUIT_COLOR[Math.floor(t / 9)],
+        'cursor:' + (o.onClick ? 'pointer' : 'default'),
+        o.selected ? 'outline:3px solid #ff5fa2;outline-offset:1px' : '',
+        o.dim ? 'opacity:.5' : '',
+      ]
+        .filter(Boolean)
+        .join(';')
+      const txt = document.createElement('span')
+      txt.textContent = mjShort(t)
+      el.appendChild(txt)
+      const img = new Image()
+      img.alt = ''
+      img.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover'
+      img.onload = () => {
+        txt.style.visibility = 'hidden'
+        el.appendChild(img)
+      }
+      img.src = base + t + '.png'
+      if (o.onClick) el.addEventListener('click', o.onClick)
+      return el
+    }
+
+    function openMahjong(opts) {
+      const auth = opts.auth
+      const onToast = opts.onToast || (() => {})
+      const base = auth.server.replace(/\/+$/, '')
+      const tileBase = base + '/mj/'
+
+      const B =
+        'padding:6px 10px;border-radius:9px;border:1.5px solid #ffd3e6;background:#fff;color:#5b3a63;font-size:12px;font-weight:650;cursor:pointer'
+      const wrap = document.createElement('div')
+      wrap.style.cssText = [
+        'position:fixed',
+        'right:18px',
+        'bottom:18px',
+        'width:520px',
+        'max-width:calc(100vw - 20px)',
+        'height:600px',
+        'max-height:calc(100vh - 30px)',
+        'z-index:2147483646',
+        'display:flex',
+        'flex-direction:column',
+        'border-radius:18px',
+        'background:linear-gradient(180deg,#fff8fc,#f4f9ff)',
+        'border:2px solid #ffd3e6',
+        'box-shadow:0 26px 70px rgba(255,95,162,.28)',
+        'font:13px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif',
+        'color:#3b2b45',
+        'overflow:hidden',
+      ].join(';')
+      wrap.innerHTML =
+        '<div style="display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:2px solid #ffd9ec">' +
+        '<b style="font-size:14px">🀄 麻将</b>' +
+        '<span data-room style="font-size:12px;color:#a184b3"></span>' +
+        '<span style="flex:1"></span>' +
+        '<button data-close style="' +
+        B +
+        '">✕</button>' +
+        '</div>' +
+        '<div data-body style="flex:1;min-height:0;overflow:auto;padding:10px 12px"></div>'
+      document.body.appendChild(wrap)
+
+      const $ = (s) => wrap.querySelector(s)
+      const bodyEl = $('[data-body]')
+      const roomEl = $('[data-room]')
+      const hint = document.createElement('div')
+      hint.style.cssText = 'font-size:11px;color:#b0629a;padding:2px 4px 6px'
+
+      let roomId = ''
+      let seat = -1
+      let state = null
+      let room = null
+      let timer = null
+      let stopped = false
+
+      const api2 = (m, path, b) =>
+        api(auth.server, path, { method: m, token: auth.token, body: b })
+
+      const chip = (t) => {
+        const s = document.createElement('span')
+        s.textContent = t
+        s.style.cssText =
+          'font-size:11px;padding:1px 7px;border-radius:99px;background:#ffe3f0;color:#b14a86;border:1px solid #ffd3e6'
+        return s
+      }
+
+      const btn = (t, fn, primary) => {
+        const b = document.createElement('button')
+        b.textContent = t
+        b.style.cssText = primary
+          ? 'padding:7px 14px;border-radius:10px;border:none;background:linear-gradient(135deg,#ff5fa2,#a86bff);color:#fff;font-size:12.5px;font-weight:700;cursor:pointer;box-shadow:0 6px 16px rgba(255,95,162,.3)'
+          : B
+        b.addEventListener('click', fn)
+        return b
+      }
+
+      /* ---------- 大厅 ---------- */
+      const renderLobby = async () => {
+        bodyEl.textContent = ''
+        roomEl.textContent = ''
+        const title = document.createElement('div')
+        title.textContent = '开一桌（缺的位置由机器人补）'
+        title.style.cssText = 'font-size:12px;color:#a184b3;margin:2px 0 10px'
+        bodyEl.appendChild(title)
+        bodyEl.appendChild(btn('＋ 新建牌桌', async () => {
+          try {
+            const r = await api2('POST', '/api/mj/rooms')
+            roomId = r.room.id
+            seat = 0
+            render()
+          } catch (e) {
+            onToast('建房失败：' + friendly(e))
+          }
+        }, true))
+
+        const listWrap = document.createElement('div')
+        listWrap.style.cssText = 'margin-top:14px;display:flex;flex-direction:column;gap:6px'
+        bodyEl.appendChild(listWrap)
+        try {
+          const r = await api2('GET', '/api/mj/rooms')
+          const rooms = (r.rooms || []).filter((x) => !x.ended)
+          if (!rooms.length) {
+            const e = document.createElement('div')
+            e.textContent = '还没有牌桌，点上面新建一个'
+            e.style.cssText = 'font-size:12px;color:#b39fc4;padding:6px 2px'
+            listWrap.appendChild(e)
+          }
+          for (const rm of rooms) {
+            const row = document.createElement('div')
+            row.style.cssText =
+              'display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:10px;background:#fff;border:1.5px solid #ffe3f0'
+            const t = document.createElement('span')
+            t.textContent = '#' + rm.id + (rm.started ? ' · 进行中' : ' · 等人')
+            t.style.cssText = 'flex:1;font-size:12px'
+            row.appendChild(t)
+            row.appendChild(chip(rm.players.filter((p) => p.id).length + '/4'))
+            row.appendChild(
+              btn('加入', async () => {
+                try {
+                  const j = await api2('POST', '/api/mj/rooms/' + rm.id + '/join')
+                  roomId = rm.id
+                  seat = j.seat
+                  render()
+                } catch (e) {
+                  onToast('加入失败：' + friendly(e))
+                }
+              }),
+            )
+            listWrap.appendChild(row)
+          }
+        } catch (e) {
+          hint.textContent = '房间列表读取失败'
+        }
+      }
+
+      /* ---------- 牌桌 ---------- */
+      const renderTable = () => {
+        bodyEl.textContent = ''
+        roomEl.textContent = '房间 ' + roomId
+        const s = state
+        if (!s) return
+
+        const meInfo = room.players[seat] || { name: '我' }
+
+        // 对家
+        const top = document.createElement('div')
+        top.style.cssText = 'display:flex;align-items:center;gap:8px;justify-content:center;margin-bottom:8px'
+        const opp2 = room.players[2] || { name: '空位' }
+        top.appendChild(chip(opp2.name + ' · ' + (s.seats[2].handCount || 0) + ' 张'))
+        if (s.turn === 2 && !s.ended) top.appendChild(chip('出牌中'))
+        bodyEl.appendChild(top)
+
+        // 左右 + 牌河
+        const mid = document.createElement('div')
+        mid.style.cssText = 'display:flex;gap:8px;align-items:flex-start'
+        const side = (i) => {
+          const box = document.createElement('div')
+          box.style.cssText = 'width:78px;flex:0 0 auto;display:flex;flex-direction:column;gap:4px'
+          const p = room.players[i] || { name: '空位' }
+          box.appendChild(chip(p.name))
+          box.appendChild(chip((s.seats[i].handCount || 0) + ' 张'))
+          if (s.turn === i && !s.ended) box.appendChild(chip('出牌中'))
+          return box
+        }
+        mid.appendChild(side(3))
+
+        const pool = document.createElement('div')
+        pool.style.cssText =
+          'flex:1;min-width:0;background:#024d3a;border-radius:12px;padding:6px;display:flex;flex-wrap:wrap;gap:2px;align-content:flex-start;min-height:96px'
+        s.discards.forEach((arr, i) => {
+          for (const t of arr) {
+            const tile = mjTileEl(tileBase, t, 20)
+            if (s.lastDiscard && s.lastDiscard.tile === t && i === s.lastDiscard.seat) {
+              tile.style.outline = '2px solid #ffcf3d'
+            }
+            pool.appendChild(tile)
+          }
+        })
+        mid.appendChild(pool)
+        mid.appendChild(side(1))
+        bodyEl.appendChild(mid)
+
+        // 我的副露
+        const melds = document.createElement('div')
+        melds.style.cssText = 'display:flex;gap:4px;flex-wrap:wrap;margin:8px 0 4px;min-height:26px'
+        for (const m of s.seats[seat].melds || []) {
+          const g = document.createElement('div')
+          g.style.cssText = 'display:flex;gap:1px'
+          const n = m.type === 'gang' ? 4 : 3
+          for (let k = 0; k < n; k++) g.appendChild(mjTileEl(tileBase, m.tile, 22))
+          melds.appendChild(g)
+        }
+        bodyEl.appendChild(melds)
+
+        // 顶部状态
+        const status = document.createElement('div')
+        status.style.cssText = 'display:flex;gap:6px;align-items:center;margin:2px 0 6px'
+        status.appendChild(chip('牌墙 ' + s.wallCount))
+        status.appendChild(chip(meInfo.name))
+        if (s.ended) {
+          status.appendChild(
+            chip(s.winner === null ? '流局' : (room.players[s.winner] || {}).name + ' 胡了'),
+          )
+        } else if (s.turn === seat) {
+          status.appendChild(chip('轮到你了'))
+        }
+        bodyEl.appendChild(status)
+
+        // 我的手牌
+        const handWrap = document.createElement('div')
+        handWrap.style.cssText = 'display:flex;gap:3px;flex-wrap:wrap;margin-bottom:8px'
+        const hand = s.seats[seat].hand || []
+        for (const t of hand) {
+          handWrap.appendChild(
+            mjTileEl(tileBase, t, 34, {
+              button: true,
+              dim: !(s.turn === seat && s.phase === 'discard' && !s.ended),
+              onClick:
+                s.turn === seat && s.phase === 'discard' && !s.ended
+                  ? () => act({ type: 'discard', tile: t })
+                  : null,
+            }),
+          )
+        }
+        bodyEl.appendChild(handWrap)
+
+        // 操作
+        const acts = document.createElement('div')
+        acts.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;align-items:center'
+        if (!s.ended) {
+          for (const op of s.options || []) {
+            const label = op === 'hu' ? '胡' : op === 'gang' ? '杠' : '碰'
+            acts.appendChild(btn(label, () => act({ type: op }), true))
+          }
+          if ((s.options || []).length) acts.appendChild(btn('过', () => act({ type: 'pass' })))
+          if (s.turn === seat && s.phase === 'discard' && s.seats[seat].drawn !== null) {
+            acts.appendChild(btn('自摸', () => act({ type: 'zimo' })))
+          }
+        } else {
+          acts.appendChild(btn('再来一局', () => act({ type: 'restart' }), true))
+          acts.appendChild(btn('回大厅', () => {
+            state = null
+            room = null
+            roomId = ''
+            seat = -1
+            renderLobby()
+          }))
+        }
+        bodyEl.appendChild(acts)
+      }
+
+      const render = async () => {
+        if (stopped || !roomId) return
+        try {
+          const r = await api2('GET', '/api/mj/rooms/' + roomId + '/state')
+          room = r.room
+          seat = r.seat
+          state = r.state
+          if (!state) renderWaiting()
+          else renderTable()
+        } catch (e) {
+          hint.textContent = '状态读取失败'
+        }
+      }
+
+      const renderWaiting = () => {
+        bodyEl.textContent = ''
+        roomEl.textContent = '房间 ' + roomId
+        const t = document.createElement('div')
+        t.textContent = '等房主开局（房间号 ' + roomId + '，发给朋友就能进）'
+        t.style.cssText = 'font-size:12px;color:#a184b3;margin:6px 2px'
+        bodyEl.appendChild(t)
+        const who = document.createElement('div')
+        who.style.cssText = 'display:flex;flex-direction:column;gap:4px;margin:8px 0'
+        for (const p of room.players) who.appendChild(chip(p.seat + 1 + ' 号位 ' + p.name))
+        bodyEl.appendChild(who)
+        if (room.owner === auth.id) {
+          bodyEl.appendChild(
+            btn('开局', async () => {
+              try {
+                await api2('POST', '/api/mj/rooms/' + roomId + '/start')
+                render()
+              } catch (e) {
+                onToast('开局失败：' + friendly(e))
+              }
+            }, true),
+          )
+        }
+      }
+
+      const act = async (payload) => {
+        try {
+          if (payload.type === 'restart') {
+            await api2('POST', '/api/mj/rooms/' + roomId + '/start')
+          } else {
+            await api2('POST', '/api/mj/rooms/' + roomId + '/act', payload)
+          }
+          await render()
+        } catch (e) {
+          onToast('操作失败：' + friendly(e))
+        }
+      }
+
+      // 只轮询牌桌；大厅不刷，避免列表一直闪
+      const tick = async () => {
+        if (stopped || !roomId) return
+        await render()
+      }
+
+      $('[data-close]').addEventListener('click', () => {
+        stopped = true
+        window.clearInterval(timer)
+        wrap.remove()
+      })
+
+      renderLobby()
+      timer = window.setInterval(tick, 1300)
+      return { close: () => wrap.remove() }
     }
 
     function SocialView(props) {
