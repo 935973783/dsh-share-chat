@@ -5902,7 +5902,7 @@ window.__ModuleLoader__.load({
         '</div>' +
         '<div data-panel style="flex:1;min-width:0;border-left:1px solid #e3eaf4;overflow:auto;padding:12px">' +
         '<div data-dyn></div>' +
-        '<div data-calc style="border-top:1px solid #e8eef7;margin-top:10px;padding-top:10px"></div>' +
+        '<div data-calc style="border:1px solid #e6edf6;border-radius:10px;padding:8px 10px;background:#fff"></div>' +
         '</div>' +
         '</div>'
       document.body.appendChild(wrap)
@@ -6134,7 +6134,10 @@ window.__ModuleLoader__.load({
             line.textContent = ''
           }
         }
-        box.appendChild(line)
+        const selBox = document.createElement('div')
+        selBox.style.cssText = 'border:1px solid #e6edf6;border-radius:10px;padding:8px 10px;background:#fff;margin-bottom:8px'
+        selBox.appendChild(line)
+        box.appendChild(selBox)
 
         // 组合提示：常显。没选格子就留个说明，选一个格子就列它所在笼的组合
         {
@@ -6188,8 +6191,11 @@ window.__ModuleLoader__.load({
             }
           }
 
-          box.appendChild(head)
-          box.appendChild(bodyC)
+          const comboBox = document.createElement('div')
+          comboBox.style.cssText = 'border:1px solid #e6edf6;border-radius:10px;padding:8px 10px;background:#fff;margin-bottom:8px'
+          comboBox.appendChild(head)
+          comboBox.appendChild(bodyC)
+          box.appendChild(comboBox)
         }
 
         dynEl.appendChild(box)
