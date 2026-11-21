@@ -6111,56 +6111,30 @@ window.__ModuleLoader__.load({
         const box = document.createElement('div')
         box.style.cssText = 'display:flex;flex-direction:column;gap:8px'
 
-        // 选中信息：常显，没选就留一行灰字
+        // 选中信息：这一行位置固定。
+        // 只有当选中范围完整覆盖了它碰到的每一个笼时，和才是「用笼能算出来」的；
+        // 只要有一格所在的笼没被选全，就算不出，直接留空。
         const selList = [...selSet]
         const line = document.createElement('div')
-        line.style.cssText = 'font-size:12px;min-height:19px;font-weight:600'
+        line.style.cssText = 'font-size:12px;min-height:19px;font-weight:600;color:#4a6a92'
         if (!selList.length) {
           line.textContent = '还没选格子 · 按住左键拖过去可以选多格'
           line.style.color = '#a7b6c9'
           line.style.fontWeight = '400'
         } else {
-          const filled = selList.filter((i) => g[i] > 0)
-          const sum = filled.reduce((a, i) => a + g[i], 0)
-          // 选中的格子如果完整覆盖了若干笼，这些笼的和是已知的，直接给出总和
-          const covered = cages.filter((cg) => cg.cells.every((i) => selSet.has(i)))
-          const coveredSum = covered.reduce((a, cg) => a + cg.sum, 0)
-          line.textContent =
-            '选中 ' +
-            selList.length +
-            ' 格 · 空格 ' +
-            (selList.length - filled.length) +
-            (covered.length
-              ? ' · 完整笼 ' + covered.length + ' 个，和 ' + coveredSum
-              : filled.length
-                ? ' · 已填和 ' + sum
-                : '')
-          line.style.color = '#4a6a92'
-        }
-        box.appendChild(line)
-
-        if (selList.length) {
-          const filled = selList.filter((i) => g[i] > 0)
-          const sum = filled.reduce((a, i) => a + g[i], 0)
-          // 若选中的是同一个笼，给出笼的目标与当前和
-          const owners = new Set(selList.map((i) => owner[i]))
-          if (owners.size === 1) {
-            const ci = [...owners][0]
-            const cage = cages[ci]
-            const wholeCage = cage && selList.length === cage.cells.length
-            if (cage) {
-              const info = document.createElement('div')
-              info.style.cssText = 'font-size:12px;color:#7b8ca6'
-              info.textContent =
-                '这个笼 ' + cage.cells.length + ' 格 · 目标 ' + cage.sum + (wholeCage ? ' · 已填和 ' + sum : '')
-              if (wholeCage && filled.length === selList.length && sum !== cage.sum) {
-                info.textContent += ' · 对不上'
-                info.style.color = '#d9534f'
-              }
-              box.appendChild(info)
-            }
+          const touched = new Set(selList.map((k) => owner[k]))
+          const allCovered = [...touched].every(
+            (ci) => cages[ci] && cages[ci].cells.every((k) => selSet.has(k)),
+          )
+          if (allCovered) {
+            let sum = 0
+            for (const ci of touched) sum += cages[ci].sum
+            line.textContent = '选中 ' + selList.length + ' 格 · 和 ' + sum
+          } else {
+            line.textContent = ''
           }
         }
+        box.appendChild(line)
 
         // 组合提示：常显。没选格子就留个说明，选一个格子就列它所在笼的组合
         {
