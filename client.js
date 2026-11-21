@@ -784,6 +784,8 @@ window.__ModuleLoader__.load({
       avatarBase = auth.server
       const [groups, setGroups] = useState([])
       const [myAvatar, setMyAvatar] = useState('')
+      // Electron 里 window.prompt 不可用，所有需要输入的地方都走这个内联框
+      const [inline, setInline] = useState(null)
 
       const cursorRef = useRef(0)
       const listRef = useRef(null)
@@ -971,48 +973,34 @@ window.__ModuleLoader__.load({
       }
 
       /* 好友列表里的「最后一条」摘要 */
-      /** 建群 / 拉人 / 换自己的头像 */
-      const createGroup = async () => {
-        let name = ''
-        try {
-          name = (window.prompt('群名？') || '').trim()
-        } catch (e) {
-          name = ''
-        }
-        if (!name) return
+      /** 建群 / 拉人共用同一个内联输入框（Electron 没有 window.prompt） */
+      const submitInline = async () => {
+        const it = inline
+        if (!it) return
+        const v = String(it.value || '').trim()
+        if (!v) return
         setErr('')
         try {
-          const r = await api(auth.server, '/api/groups', {
-            method: 'POST',
-            token: auth.token,
-            body: { name },
-          })
-          await loadFriends()
-          setActive('g:' + r.group.id)
-          cursorRef.current = 0
-          setMessages([])
-        } catch (e) {
-          setErr(friendly(e))
-        }
-      }
-
-      const addMember = async () => {
-        if (!active || active.indexOf('g:') !== 0) return
-        let id = ''
-        try {
-          id = (window.prompt('把谁的 ID 拉进群？') || '').trim()
-        } catch (e) {
-          id = ''
-        }
-        if (!id) return
-        setErr('')
-        try {
-          await api(auth.server, '/api/groups/' + active.slice(2) + '/members', {
-            method: 'POST',
-            token: auth.token,
-            body: { id },
-          })
-          await loadFriends()
+          if (it.mode === 'group') {
+            const r = await api(auth.server, '/api/groups', {
+              method: 'POST',
+              token: auth.token,
+              body: { name: v },
+            })
+            await loadFriends()
+            setActive('g:' + r.group.id)
+            cursorRef.current = 0
+            setMessages([])
+          } else if (it.mode === 'member') {
+            if (!active || active.indexOf('g:') !== 0) return
+            await api(auth.server, '/api/groups/' + active.slice(2) + '/members', {
+              method: 'POST',
+              token: auth.token,
+              body: { id: v },
+            })
+            await loadFriends()
+          }
+          setInline(null)
         } catch (e) {
           setErr(friendly(e))
         }
@@ -1231,8 +1219,46 @@ window.__ModuleLoader__.load({
                 },
               }),
               h('button', { className: 'sc-btn sc-btn-sm', onClick: addFriend }, '添加'),
-              h('button', { className: 'sc-btn sc-btn-sm', onClick: createGroup, title: '建一个群' }, '建群'),
+              h(
+                'button',
+                {
+                  className: 'sc-btn sc-btn-sm',
+                  onClick: () => setInline({ mode: 'group', value: '' }),
+                  title: '建一个群',
+                },
+                '建群',
+              ),
             ),
+            inline
+              ? h(
+                  'div',
+                  { className: 'sc-add' },
+                  h('input', {
+                    className: 'sc-input',
+                    autoFocus: true,
+                    placeholder: inline.mode === 'group' ? '群名' : '对方 ID',
+                    value: inline.value,
+                    onChange: (e) => setInline({ mode: inline.mode, value: e.target.value }),
+                    onKeyDown: (e) => {
+                      if (e.key === 'Enter') submitInline()
+                      if (e.key === 'Escape') setInline(null)
+                    },
+                  }),
+                  h(
+                    'button',
+                    { className: 'sc-btn sc-btn-sm', onClick: submitInline },
+                    inline.mode === 'group' ? '创建' : '拉入',
+                  ),
+                  h(
+                    'button',
+                    {
+                      className: 'sc-btn sc-btn-sm sc-btn-ghost',
+                      onClick: () => setInline(null),
+                    },
+                    '取消',
+                  ),
+                )
+              : null,
             h(
               'div',
               { className: 'sc-friends' },
@@ -1244,11 +1270,7 @@ window.__ModuleLoader__.load({
                       {
                         key: c.key,
                         className: 'sc-friend' + (active === c.key ? ' on' : ''),
-                        onClick: () => {
-                          setActive(c.key)
-                          cursorRef.current = 0
-                          setMessages([])
-                        },
+                        onClick: () => setActive(c.key),
                         title: c.key,
                       },
                       c.kind === 'group'
@@ -1287,7 +1309,11 @@ window.__ModuleLoader__.load({
                   isGroup
                     ? h(
                         'button',
-                        { className: 'sc-btn sc-btn-sm', onClick: addMember, title: '拉人进群' },
+                        {
+                          className: 'sc-btn sc-btn-sm',
+                          onClick: () => setInline({ mode: 'member', value: '' }),
+                          title: '拉人进群',
+                        },
                         '＋人',
                       )
                     : null,
