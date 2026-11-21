@@ -6680,8 +6680,8 @@ window.__ModuleLoader__.load({
             'justify-content:center',
             'cursor:pointer',
             'user-select:none',
-            'border-right:' + (boxRight ? '2px solid #1f2a37' : '1px solid #d9e1ec'),
-            'border-bottom:' + (boxBottom ? '2px solid #1f2a37' : '1px solid #d9e1ec'),
+            'border-right:' + (boxRight ? '2px solid #1f2a37' : '1px solid #b3c2d4'),
+            'border-bottom:' + (boxBottom ? '2px solid #1f2a37' : '1px solid #b3c2d4'),
             i % 9 === 8 ? 'border-right:none' : '',
             i >= 72 ? 'border-bottom:none' : '',
           ]
