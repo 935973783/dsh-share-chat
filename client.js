@@ -6121,8 +6121,19 @@ window.__ModuleLoader__.load({
         } else {
           const filled = selList.filter((i) => g[i] > 0)
           const sum = filled.reduce((a, i) => a + g[i], 0)
+          // 选中的格子如果完整覆盖了若干笼，这些笼的和是已知的，直接给出总和
+          const covered = cages.filter((cg) => cg.cells.every((i) => selSet.has(i)))
+          const coveredSum = covered.reduce((a, cg) => a + cg.sum, 0)
           line.textContent =
-            '选中 ' + selList.length + ' 格' + (filled.length ? ' · 已填和 ' + sum : '') + ' · 空格 ' + (selList.length - filled.length)
+            '选中 ' +
+            selList.length +
+            ' 格 · 空格 ' +
+            (selList.length - filled.length) +
+            (covered.length
+              ? ' · 完整笼 ' + covered.length + ' 个，和 ' + coveredSum
+              : filled.length
+                ? ' · 已填和 ' + sum
+                : '')
           line.style.color = '#4a6a92'
         }
         box.appendChild(line)
