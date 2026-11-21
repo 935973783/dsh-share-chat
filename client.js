@@ -473,13 +473,78 @@ window.__ModuleLoader__.load({
 }
 `
 
+    /** 多巴胺主题：叠在基础样式之后，只改观感不动布局 */
+    const DOPAMINE_CSS = `
+.sc-root{
+  --dopa-pink:#ff5fa2; --dopa-pink-soft:#ffe3ef; --dopa-violet:#a86bff;
+  --dopa-blue:#4d9fff; --dopa-mint:#3ddc97; --dopa-yellow:#ffcf3d; --dopa-ink:#3b2b45;
+  background:linear-gradient(180deg,#fff8fc 0%,#f7faff 100%);
+}
+/* 顶栏 */
+.sc-chat-head{background:linear-gradient(96deg,#ffeaf4 0%,#fff7e8 45%,#eaf4ff 100%);border-bottom:2px solid #ffd9ec;box-shadow:0 4px 14px rgba(255,120,180,.10)}
+.sc-chat-name{color:#4a2b52}
+.sc-chat-sub{color:#a184b3}
+/* 按钮 */
+.sc-btn{border-radius:12px;border:1.5px solid #ffd3e6;background:#fff;font-weight:650;color:#5b3a63;transition:background .15s,border-color .15s,transform .1s}
+.sc-btn:hover{background:#fff2f9;border-color:#ff9ec4}
+.sc-btn:active{transform:scale(.97)}
+.sc-btn-ghost{border-color:#e8e2f0;background:transparent;color:#8a7a95}
+.sc-btn-primary{background:linear-gradient(135deg,#ff5fa2,#a86bff);color:#fff;border-color:transparent;box-shadow:0 6px 16px rgba(255,95,162,.30)}
+.sc-btn-primary:hover{background:linear-gradient(135deg,#ff4b96,#9a58ff);border-color:transparent}
+/* 侧栏 */
+.sc-side{background:linear-gradient(180deg,#fff5fa 0%,#f4f9ff 100%);border-right:2px solid #ffe3f0}
+.sc-side-title{color:#b14a86;letter-spacing:.6px}
+.sc-add .sc-input{border:1.5px solid #ffd3e6;border-radius:12px;background:#fff}
+.sc-add .sc-input:focus{border-color:#ff9ec4;box-shadow:0 0 0 3px rgba(255,158,196,.25);outline:none}
+.sc-friend{border-radius:14px;transition:background .15s,box-shadow .15s}
+.sc-friend:hover{background:#fff6fb}
+.sc-friend.on{background:linear-gradient(135deg,#ffe3f0,#e0f0ff);box-shadow:inset 0 0 0 2px #ffb3d4,0 6px 14px rgba(255,120,180,.16)}
+.sc-friend-name{color:#4a2b52;font-weight:650}
+.sc-friend-last{color:#a184b3}
+/* 消息 */
+.sc-thread{background:transparent}
+.sc-bubble{background:#fff;border:1.5px solid #ffdcea;box-shadow:0 3px 10px rgba(168,107,255,.10)}
+.sc-msg.mine .sc-bubble{background:linear-gradient(135deg,#ff5fa2,#a86bff);border-color:transparent;color:#fff;box-shadow:0 8px 20px rgba(255,95,162,.28)}
+.sc-time{color:#a78bb5}
+.sc-avatar{box-shadow:0 0 0 2px #fff,0 2px 8px rgba(60,40,80,.16)}
+/* 文件卡片 */
+.sc-file{background:linear-gradient(135deg,#f3f8ff,#fff4fb);border:1.5px solid #d6e6ff;border-radius:14px;transition:box-shadow .15s,transform .1s}
+.sc-file:hover{box-shadow:0 6px 18px rgba(77,159,255,.20);transform:translateY(-1px)}
+.sc-file-name{color:#2f4a6b;font-weight:600}
+.sc-file-size{color:#8fa6bf}
+/* 输入区 */
+.sc-composer{background:linear-gradient(180deg,#ffffff,#fff8fc);border-top:2px solid #ffd9ec;box-shadow:0 -4px 14px rgba(255,120,180,.08)}
+.sc-composer input,.sc-composer textarea{border:1.5px solid #ffd3e6;border-radius:16px;background:#fff;outline:none}
+.sc-composer input:focus,.sc-composer textarea:focus{border-color:#ff9ec4;box-shadow:0 0 0 3px rgba(255,158,196,.22)}
+.sc-emoji{border:1.5px solid #ffd3e6;border-radius:16px;background:#fff}
+/* 空状态 / 报错 */
+.sc-err{background:#fff0f5;border-radius:10px;padding:2px 8px}
+/* 滚动条 */
+.sc-thread::-webkit-scrollbar,.sc-friends::-webkit-scrollbar,.sc-side::-webkit-scrollbar{width:9px}
+.sc-thread::-webkit-scrollbar-thumb,.sc-friends::-webkit-scrollbar-thumb,.sc-side::-webkit-scrollbar-thumb{background:#ffd0e6;border-radius:9px;border:2px solid transparent;background-clip:content-box}
+.sc-thread::-webkit-scrollbar-thumb:hover{background:#ffb3d4;background-clip:content-box}
+.sc-thread::-webkit-scrollbar-track,.sc-friends::-webkit-scrollbar-track{background:transparent}
+/* 登录卡片 */
+.sc-login-card{border:2px solid #ffe0ee;border-radius:24px;box-shadow:0 22px 60px rgba(255,120,180,.18)}
+.sc-logo{background:linear-gradient(135deg,#ffd6e8,#e6f0ff);border-radius:16px}
+.sc-login-title{color:#4a2b52}
+`
+
     function ensureStyles() {
       if (typeof document === 'undefined') return
-      if (document.getElementById(STYLE_ID)) return
-      const el = document.createElement('style')
-      el.id = STYLE_ID
-      el.textContent = CSS
-      document.head.appendChild(el)
+      if (!document.getElementById(STYLE_ID)) {
+        const el = document.createElement('style')
+        el.id = STYLE_ID
+        el.textContent = CSS
+        document.head.appendChild(el)
+      }
+      const dopaId = STYLE_ID + '-dopa'
+      if (!document.getElementById(dopaId)) {
+        const t = document.createElement('style')
+        t.id = dopaId
+        t.textContent = DOPAMINE_CSS
+        document.head.appendChild(t)
+      }
     }
 
     const LINE = '1px solid var(--dsw-alias-border-l2, rgba(128,128,128,.22))'
@@ -5832,8 +5897,11 @@ window.__ModuleLoader__.load({
         ctx.effect(() => {
           ensureStyles()
           return () => {
-            const el = typeof document !== 'undefined' ? document.getElementById(STYLE_ID) : null
-            if (el && el.parentNode) el.parentNode.removeChild(el)
+            if (typeof document === 'undefined') return
+            for (const id of [STYLE_ID, STYLE_ID + '-dopa']) {
+              const el = document.getElementById(id)
+              if (el && el.parentNode) el.parentNode.removeChild(el)
+            }
           }
         })
 
