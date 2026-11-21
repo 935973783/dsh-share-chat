@@ -5677,27 +5677,41 @@ window.__ModuleLoader__.load({
     }
 
     /* ---------- 每日杀手数独 ---------- */
+    /* ---------- 每日杀手数独 ---------- */
     function openKiller(opts) {
       const auth = opts.auth
       const onToast = opts.onToast || (() => {})
 
+      // 组合枚举：从 1..9 里挑 n 个数，和等于 s
+      const combos = (s, n) => {
+        const out = []
+        const cur = []
+        const go = (start, left, sum) => {
+          if (left === 0) {
+            if (sum === s) out.push(cur.slice())
+            return
+          }
+          for (let d = start; d <= 9; d++) {
+            if (sum + d > s) break
+            if (sum + d + ((left - 1) * (d + 1 + (d + left - 1))) / 2 > s + 0.5) {
+              /* 粗略上界剪枝，交给下面继续 */
+            }
+            cur.push(d)
+            go(d + 1, left - 1, sum + d)
+            cur.pop()
+          }
+        }
+        if (n > 0 && n <= 9) go(1, n, 0)
+        return out
+      }
+
       const wrap = document.createElement('div')
       wrap.style.cssText = [
-        'position:fixed',
-        'right:18px',
-        'bottom:18px',
-        'width:470px',
-        'max-width:calc(100vw - 16px)',
-        'z-index:2147483646',
-        'display:flex',
-        'flex-direction:column',
-        'border-radius:16px',
-        'background:#fbfcfe',
-        'border:2px solid #dbe4f0',
+        'position:fixed', 'right:18px', 'bottom:18px', 'width:520px', 'max-width:calc(100vw - 16px)',
+        'max-height:calc(100vh - 24px)', 'z-index:2147483646', 'display:flex', 'flex-direction:column',
+        'border-radius:16px', 'background:#fbfcfe', 'border:2px solid #dbe4f0',
         'box-shadow:0 24px 60px rgba(30,50,90,.28)',
-        'font:13px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif',
-        'color:#1f2a37',
-        'overflow:hidden',
+        'font:13px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif', 'color:#1f2a37', 'overflow:hidden',
       ].join(';')
       wrap.innerHTML =
         '<div style="display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid #e3eaf4">' +
@@ -5707,125 +5721,87 @@ window.__ModuleLoader__.load({
         '<button data-close style="padding:5px 9px;border-radius:8px;border:1px solid #dbe4f0;background:#fff;cursor:pointer">✕</button>' +
         '</div>' +
         '<div data-sel style="padding:0 12px"></div>' +
-        '<div data-body style="padding:12px"></div>'
+        '<div style="flex:1;min-height:0;overflow:auto;padding:10px 12px 14px">' +
+        '<div data-body></div>' +
+        '<div data-panel style="margin-top:10px"></div>' +
+        '</div>'
       document.body.appendChild(wrap)
 
       const $ = (s) => wrap.querySelector(s)
       const bodyEl = $('[data-body]')
       const selEl = $('[data-sel]')
-      let puzzles = []
-      let curIdx = 0
+      const panelEl = $('[data-panel]')
+
+      const ROW = (i) => (i / 9) | 0
+      const COL = (i) => i % 9
+      const BOX = (i) => ((ROW(i) / 3) | 0) * 3 + ((COL(i) / 3) | 0)
 
       let day = ''
+      let curSource = ''
+      let puzzles = []
+      let curIdx = 0
       let cages = []
       let owner = null
-      let grid = new Array(81).fill(0)
-      let sel = -1
-      let cageStart = new Set()
-      let cageSum = new Map()
+      let marks = [] // { v, p:[], u:[] }
+      let selSet = new Set()
       let cells = []
       let startedAt = 0
       let timer = null
       let done = false
+      let pencilMode = false
 
       const fmt = (ms) => {
         const s = Math.floor(ms / 1000)
         return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0')
       }
 
-      const keyOfDay = () => 'dsh-share-chat.killer.' + day + '.' + (puzzles[curIdx] ? puzzles[curIdx].number : 'x')
+      const puzzleKey = () =>
+        'dsh-share-chat.killer.' + day + '.' + (puzzles[curIdx] ? puzzles[curIdx].number : 'x')
 
-      const applyPuzzle = (idx, keepProgress) => {
-        curIdx = idx
-        const pz = puzzles[idx]
-        cages = (pz && pz.cages) || []
-        cageStart = new Set()
-        cageSum = new Map()
-        cages.forEach((c) => {
-          const start = Math.min(...c.cells)
-          cageStart.add(start)
-          cageSum.set(start, c.sum)
-        })
-        grid = new Array(81).fill(0)
-        done = false
-        sel = -1
-        startedAt = 0
-        window.clearInterval(timer)
-        $('[data-timer]').textContent = ''
-        if (keepProgress) {
-          const saved = readJson(keyOfDay())
-          if (saved && Array.isArray(saved.grid) && saved.grid.length === 81) {
-            grid = saved.grid.slice()
-            startedAt = Number(saved.startedAt) || 0
-            if (startedAt && grid.some((x) => x > 0)) {
-              timer = window.setInterval(() => {
-                $('[data-timer]').textContent = fmt(Date.now() - startedAt)
-              }, 1000)
-            }
-          }
-        }
-        $('[data-day]').textContent =
-          day + (pz && pz.number ? ' · #' + pz.number : '') + (curSource === 'generated' ? ' · 自动出题' : '')
-        renderSel()
-        build()
-      }
+      const blankMarks = () => Array.from({ length: 81 }, () => ({ v: 0, p: [], u: [] }))
 
-      const renderSel = () => {
-        selEl.textContent = ''
-        if (puzzles.length < 2) return
-        const bar = document.createElement('div')
-        bar.style.cssText = 'display:flex;gap:6px;justify-content:center;padding:10px 0 2px'
-        puzzles.forEach((pz, idx) => {
-          const b = document.createElement('button')
-          b.textContent = String(idx + 1)
-          b.title = '#' + pz.number
-          b.style.cssText =
-            'min-width:34px;height:28px;border-radius:8px;border:1px solid ' +
-            (idx === curIdx ? '#7ea8e0' : '#dbe4f0') +
-            ';background:' +
-            (idx === curIdx ? '#e6f0ff' : '#fff') +
-            ';font:600 12px system-ui;cursor:pointer'
-          b.addEventListener('click', () => {
-            if (idx === curIdx) return
-            applyPuzzle(idx, true)
-          })
-          bar.appendChild(b)
-        })
-        selEl.appendChild(bar)
-      }
+      const values = () => marks.map((m) => m.v)
 
       const save = () => {
         try {
-          writeJson(keyOfDay(), { grid, startedAt })
+          writeJson(puzzleKey(), {
+            marks: marks.map((m) => ({ v: m.v, p: m.p, u: m.u })),
+            startedAt,
+          })
         } catch (e) {}
       }
 
-      const ROW = (i) => (i / 9) | 0
-      const COL = (i) => i % 9
-      const BOX = (i) => ((ROW(i) / 3) | 0) * 3 + ((COL(i) / 3) | 0)
+      const tickTimer = () => {
+        window.clearInterval(timer)
+        if (!startedAt) return
+        timer = window.setInterval(() => {
+          $('[data-timer]').textContent = fmt(Date.now() - startedAt)
+        }, 1000)
+      }
 
       const conflicts = () => {
+        const g = values()
         const bad = new Set()
         for (let i = 0; i < 81; i++) {
-          const v = grid[i]
+          const v = g[i]
           if (!v) continue
           for (let j = 0; j < 81; j++) {
-            if (j === i || grid[j] !== v) continue
+            if (j === i || g[j] !== v) continue
             if (ROW(j) === ROW(i) || COL(j) === COL(i) || BOX(j) === BOX(i)) bad.add(i).add(j)
           }
         }
         for (const cage of cages) {
           const seen = new Map()
           for (const i of cage.cells) {
-            const v = grid[i]
+            const v = g[i]
             if (!v) continue
             if (seen.has(v)) {
               bad.add(i)
               bad.add(seen.get(v))
             } else seen.set(v, i)
           }
-          if (cage.cells.every((i) => grid[i] > 0)) {
-            const s = cage.cells.reduce((a, i) => a + grid[i], 0)
+          if (cage.cells.every((i) => g[i] > 0)) {
+            const s = cage.cells.reduce((a, i) => a + g[i], 0)
             if (s !== cage.sum) for (const i of cage.cells) bad.add(i)
           }
         }
@@ -5833,54 +5809,253 @@ window.__ModuleLoader__.load({
       }
 
       const paint = () => {
+        const g = values()
         const bad = conflicts()
-        const selVal = sel >= 0 ? grid[sel] : 0
+        const single = selSet.size === 1 ? [...selSet][0] : -1
+        const selVal = single >= 0 ? g[single] : 0
         for (let i = 0; i < 81; i++) {
           const cell = cells[i]
-          const v = grid[i]
+          const m = marks[i]
           cell.textContent = ''
-          if (v) {
+          if (m.v) {
             const span = document.createElement('span')
-            span.textContent = String(v)
-            span.style.cssText = 'font:600 20px system-ui;color:' + (bad.has(i) ? '#d9534f' : '#1f2a37')
+            span.textContent = String(m.v)
+            span.style.cssText =
+              'font:600 21px system-ui;color:' + (bad.has(i) ? '#d9534f' : '#1f2a37')
             cell.appendChild(span)
+          } else if (m.p.length) {
+            const grid = document.createElement('div')
+            grid.style.cssText =
+              'position:absolute;inset:2px;display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(3,1fr);font:600 8.5px/1 system-ui;color:#5b7194'
+            for (let d = 1; d <= 9; d++) {
+              const c = document.createElement('span')
+              c.style.cssText =
+                'display:flex;align-items:center;justify-content:center;' +
+                (m.p.includes(d) ? '' : 'opacity:0')
+              c.textContent = String(d)
+              if (m.p.includes(d) && m.u.includes(d)) c.style.textDecoration = 'underline'
+              grid.appendChild(c)
+            }
+            cell.appendChild(grid)
           }
           if (cageStart.has(i)) {
             const lab = document.createElement('span')
             lab.textContent = String(cageSum.get(i))
             lab.style.cssText =
-              'position:absolute;top:1px;left:3px;font:600 9.5px/1 ui-monospace,monospace;color:#6b7f9e'
+              'position:absolute;top:0px;left:2px;font:600 9.5px/1 ui-monospace,monospace;color:#6b7f9e'
             cell.appendChild(lab)
           }
           let bg = '#fff'
           if (bad.has(i)) bg = '#fde8e8'
-          else if (sel === i) bg = '#e6f0ff'
-          else if (v && selVal && v === selVal) bg = '#eef4ff'
+          else if (selSet.has(i)) bg = '#dbe9ff'
+          else if (m.v && selVal && m.v === selVal) bg = '#eef4ff'
           cell.style.background = bg
         }
+        renderPanel()
       }
 
-      const select = (i) => {
-        sel = i
+      let cageStart = new Set()
+      let cageSum = new Map()
+
+      const renderPanel = () => {
+        panelEl.textContent = ''
+        const g = values()
+        const box = document.createElement('div')
+        box.style.cssText = 'display:flex;flex-direction:column;gap:8px'
+
+        // 选中的格子
+        const selList = [...selSet]
+        if (selList.length) {
+          const filled = selList.filter((i) => g[i] > 0)
+          const sum = filled.reduce((a, i) => a + g[i], 0)
+          const line = document.createElement('div')
+          line.style.cssText = 'font-size:12px;color:#4a6a92;font-weight:600'
+          line.textContent =
+            '选中 ' + selList.length + ' 格' + (filled.length ? ' · 已填和 ' + sum : '') + ' · 空格 ' + (selList.length - filled.length)
+          box.appendChild(line)
+
+          // 若选中的是同一个笼且已填满，给出是否等于笼和
+          const owners = new Set(selList.map((i) => owner[i]))
+          if (owners.size === 1) {
+            const ci = [...owners][0]
+            const cage = cages[ci]
+            const wholeCage = cage && selList.length === cage.cells.length
+            if (cage) {
+              const info = document.createElement('div')
+              info.style.cssText = 'font-size:12px;color:#7b8ca6'
+              info.textContent =
+                '这个笼 ' + cage.cells.length + ' 格 · 目标 ' + cage.sum + (wholeCage ? ' · 已填和 ' + sum : '')
+              box.appendChild(info)
+              if (wholeCage && filled.length === selList.length && sum !== cage.sum) {
+                info.textContent += ' · 对不上'
+                info.style.color = '#d9534f'
+              }
+            }
+          }
+        }
+
+        // 组合提示：单选时显示它所在笼的可行组合
+        if (selSet.size === 1) {
+          const i = [...selSet][0]
+          const cage = cages[owner[i]]
+          if (cage) {
+            const used = cage.cells.filter((k) => g[k] > 0).map((k) => g[k])
+            const restSum = cage.sum - used.reduce((a, b) => a + b, 0)
+            const restN = cage.cells.length - used.length
+            const list = combos(restSum, restN).filter((c) => !c.some((d) => used.includes(d)))
+            const head = document.createElement('div')
+            head.style.cssText = 'font-size:12px;color:#4a6a92;font-weight:600;margin-top:2px'
+            head.textContent =
+              '这个笼的组合（' + restSum + ' / ' + restN + ' 格）' + (list.length ? '：' + list.length + ' 种' : '：无解')
+            box.appendChild(head)
+            if (list.length) {
+              const wrapC = document.createElement('div')
+              wrapC.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;max-height:96px;overflow:auto'
+              for (const c of list.slice(0, 60)) {
+                const t = document.createElement('span')
+                t.textContent = c.join('')
+                t.style.cssText =
+                  'font:600 11px ui-monospace,monospace;padding:2px 6px;border-radius:6px;background:#eef3fb;color:#3f5f8a'
+                wrapC.appendChild(t)
+              }
+              box.appendChild(wrapC)
+            }
+          }
+        }
+
+        // 计算器
+        const calc = document.createElement('div')
+        calc.style.cssText =
+          'display:flex;align-items:center;gap:6px;border-top:1px solid #e8eef7;padding-top:8px;margin-top:2px'
+        const lab = document.createElement('span')
+        lab.textContent = '计算器'
+        lab.style.cssText = 'font-size:12px;color:#7b8ca6'
+        const inSum = document.createElement('input')
+        inSum.placeholder = '和'
+        inSum.style.cssText = inpStyle()
+        const inN = document.createElement('input')
+        inN.placeholder = '格数'
+        inN.style.cssText = inpStyle()
+        const btn = document.createElement('button')
+        btn.textContent = '算'
+        btn.style.cssText =
+          'padding:4px 10px;border-radius:7px;border:1px solid #dbe4f0;background:#fff;font:600 12px system-ui;cursor:pointer'
+        const outC = document.createElement('div')
+        outC.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px'
+        btn.addEventListener('click', () => {
+          outC.textContent = ''
+          const s = Number(inSum.value)
+          const n = Number(inN.value)
+          if (!s || !n) return
+          const list = combos(s, n)
+          if (!list.length) {
+            outC.textContent = '没有组合'
+            outC.style.cssText = 'font-size:12px;color:#d9534f'
+            return
+          }
+          outC.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px'
+          for (const c of list.slice(0, 60)) {
+            const t = document.createElement('span')
+            t.textContent = c.join('')
+            t.style.cssText =
+              'font:600 11px ui-monospace,monospace;padding:2px 6px;border-radius:6px;background:#fff6e8;color:#8a5b1f'
+            outC.appendChild(t)
+          }
+        })
+        calc.appendChild(lab)
+        calc.appendChild(inSum)
+        calc.appendChild(inN)
+        calc.appendChild(btn)
+        box.appendChild(calc)
+        box.appendChild(outC)
+
+        // 操作说明
+        const tip = document.createElement('div')
+        tip.style.cssText = 'font-size:11px;color:#93a3ba;line-height:1.6'
+        tip.innerHTML =
+          '点格子选中（Shift 点选多个）· 1–9 填数（再按取消）· <b>Shift+1–9</b> 加铅笔标记 · <b>U</b> 给标记划线 · <b>C</b> 清空选中 · <b>P</b> 铅笔模式 · 方向键移动'
+        box.appendChild(tip)
+
+        panelEl.appendChild(box)
+      }
+
+      const inpStyle = () =>
+        'width:56px;padding:4px 6px;border-radius:7px;border:1px solid #dbe4f0;background:#fff;font:12px system-ui'
+
+      const select = (i, additive) => {
+        if (!additive) selSet = new Set([i])
+        else if (selSet.has(i)) selSet.delete(i)
+        else selSet.add(i)
         paint()
+      }
+
+      const touchStarted = () => {
+        if (!startedAt) {
+          startedAt = Date.now()
+          tickTimer()
+        }
       }
 
       const put = (v) => {
-        if (sel < 0 || done) return
-        if (!startedAt) {
-          startedAt = Date.now()
-          timer = window.setInterval(() => {
-            $('[data-timer]').textContent = fmt(Date.now() - startedAt)
-          }, 1000)
+        if (!selSet.size || done) return
+        touchStarted()
+        for (const i of selSet) {
+          if (marks[i].v === v) marks[i].v = 0
+          else {
+            marks[i].v = v
+            marks[i].p = []
+            marks[i].u = []
+          }
         }
-        grid[sel] = grid[sel] === v ? 0 : v
         save()
         paint()
-        if (grid.every((x) => x > 0) && conflicts().size === 0) {
+        const g = values()
+        if (g.every((x) => x > 0) && conflicts().size === 0) {
           done = true
           window.clearInterval(timer)
           onToast('解出来了 🎉')
         }
+      }
+
+      const togglePencil = (v) => {
+        if (!selSet.size || done) return
+        touchStarted()
+        for (const i of selSet) {
+          const m = marks[i]
+          if (m.v) continue
+          const at = m.p.indexOf(v)
+          if (at >= 0) {
+            m.p.splice(at, 1)
+            m.u = m.u.filter((d) => d !== v)
+          } else {
+            m.p.push(v)
+            m.p.sort((a, b) => a - b)
+          }
+        }
+        save()
+        paint()
+      }
+
+      const clearSelected = () => {
+        if (!selSet.size) return
+        for (const i of selSet) {
+          marks[i] = { v: 0, p: [], u: [] }
+        }
+        done = false
+        save()
+        paint()
+      }
+
+      const underline = () => {
+        if (!selSet.size) return
+        for (const i of selSet) {
+          const m = marks[i]
+          if (m.v || !m.p.length) continue
+          if (m.u.length === m.p.length) m.u = []
+          else m.u = m.p.slice()
+        }
+        save()
+        paint()
       }
 
       const build = () => {
@@ -5890,12 +6065,11 @@ window.__ModuleLoader__.load({
 
         const board = document.createElement('div')
         board.style.cssText =
-          'display:grid;grid-template-columns:repeat(9,44px);grid-template-rows:repeat(9,44px);border:2.5px solid #1f2a37;margin:0 auto;width:max-content'
+          'display:grid;grid-template-columns:repeat(9,46px);grid-template-rows:repeat(9,46px);border:2.5px solid #1f2a37;margin:0 auto;width:max-content'
 
         cells = []
         for (let i = 0; i < 81; i++) {
           const ci = owner[i]
-          // 三种线：宫/外框用粗实线，笼的边界用虚线，其余是细实线
           const edge = (isBox, isCage) => {
             if (isBox) return '2px solid #1f2a37'
             if (isCage) return '1.5px dashed #7b93b5'
@@ -5911,95 +6085,95 @@ window.__ModuleLoader__.load({
           const rightCage = i % 9 !== 8 && owner[i + 1] !== ci
           const cell = document.createElement('div')
           cell.style.cssText = [
-            'position:relative',
-            'display:flex',
-            'align-items:center',
-            'justify-content:center',
-            'cursor:pointer',
-            'user-select:none',
-            'border-top:' + edge(topBox, topCage),
-            'border-left:' + edge(leftBox, leftCage),
-            'border-bottom:' + edge(bottomBox, bottomCage),
-            'border-right:' + edge(rightBox, rightCage),
+            'position:relative', 'display:flex', 'align-items:center', 'justify-content:center',
+            'cursor:pointer', 'user-select:none',
+            'border-top:' + edge(topBox, topCage), 'border-left:' + edge(leftBox, leftCage),
+            'border-bottom:' + edge(bottomBox, bottomCage), 'border-right:' + edge(rightBox, rightCage),
           ].join(';')
-          cell.addEventListener('click', () => select(i))
+          cell.addEventListener('click', (e) => select(i, e.shiftKey))
           board.appendChild(cell)
           cells.push(cell)
         }
         bodyEl.appendChild(board)
 
         const pad = document.createElement('div')
-        pad.style.cssText =
-          'display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-top:12px'
+        pad.style.cssText = 'display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-top:10px'
         for (let v = 1; v <= 9; v++) {
           const b = document.createElement('button')
           b.textContent = String(v)
           b.style.cssText =
-            'padding:9px 0;border-radius:9px;border:1px solid #dbe4f0;background:#fff;font:600 15px system-ui;cursor:pointer'
-          b.addEventListener('click', () => put(v))
+            'padding:8px 0;border-radius:9px;border:1px solid #dbe4f0;background:#fff;font:600 15px system-ui;cursor:pointer'
+          b.addEventListener('click', () => (pencilMode ? togglePencil(v) : put(v)))
           pad.appendChild(b)
         }
-        const erase = document.createElement('button')
-        erase.textContent = '清除'
-        erase.style.cssText =
-          'padding:9px 0;border-radius:9px;border:1px solid #ffd3e6;background:#fff5fa;color:#c0295f;font:600 13px system-ui;cursor:pointer'
-        erase.addEventListener('click', () => {
-          if (sel >= 0 && !done) {
-            grid[sel] = 0
-            save()
-            paint()
-          }
-        })
-        pad.appendChild(erase)
-        const reset = document.createElement('button')
-        reset.textContent = '重来'
-        reset.style.cssText =
-          'padding:9px 0;border-radius:9px;border:1px solid #dbe4f0;background:#fff;font:600 13px system-ui;cursor:pointer'
-        reset.addEventListener('click', () => {
-          grid = new Array(81).fill(0)
-          done = false
-          sel = -1
-          save()
-          paint()
-        })
-        pad.appendChild(reset)
+        const mk = (label, fn, color) => {
+          const b = document.createElement('button')
+          b.textContent = label
+          b.style.cssText =
+            'padding:8px 0;border-radius:9px;border:1px solid ' +
+            (color || '#dbe4f0') +
+            ';background:#fff;font:600 12px system-ui;cursor:pointer'
+          b.addEventListener('click', fn)
+          return b
+        }
+        pad.appendChild(mk('清除', clearSelected, '#ffd3e6'))
+        pad.appendChild(
+          (() => {
+            const b = mk('铅笔', () => {
+              pencilMode = !pencilMode
+              b.style.background = pencilMode ? '#e6f0ff' : '#fff'
+              b.style.borderColor = pencilMode ? '#7ea8e0' : '#dbe4f0'
+            })
+            return b
+          })(),
+        )
         bodyEl.appendChild(pad)
-
-        const tip = document.createElement('div')
-        tip.textContent = '点格子后按 1–9 填，再按一次取消；方向键移动'
-        tip.style.cssText = 'font-size:11px;color:#93a3ba;margin-top:8px;text-align:center'
-        bodyEl.appendChild(tip)
-
         paint()
       }
 
       const onKey = (e) => {
         if (!document.body.contains(wrap)) return
-        if (e.key >= '1' && e.key <= '9') {
-          put(Number(e.key))
+        if (e.target && /^(INPUT|TEXTAREA)$/.test(e.target.tagName)) return
+        const k = e.key
+        if (k >= '1' && k <= '9') {
+          if (e.shiftKey || pencilMode) togglePencil(Number(k))
+          else put(Number(k))
           e.preventDefault()
           return
         }
-        if (e.key === 'Backspace' || e.key === 'Delete' || e.key === '0') {
-          if (sel >= 0 && !done) {
-            grid[sel] = 0
-            save()
-            paint()
-          }
+        if (k === 'u' || k === 'U') {
+          underline()
           e.preventDefault()
           return
         }
-        const move = { ArrowUp: -9, ArrowDown: 9, ArrowLeft: -1, ArrowRight: 1 }[e.key]
+        if (k === 'c' || k === 'C') {
+          clearSelected()
+          e.preventDefault()
+          return
+        }
+        if (k === 'p' || k === 'P') {
+          pencilMode = !pencilMode
+          onToast(pencilMode ? '铅笔模式：开' : '铅笔模式：关')
+          e.preventDefault()
+          return
+        }
+        if (k === 'Backspace' || k === 'Delete' || k === '0') {
+          clearSelected()
+          e.preventDefault()
+          return
+        }
+        const move = { ArrowUp: -9, ArrowDown: 9, ArrowLeft: -1, ArrowRight: 1 }[k]
         if (move !== undefined) {
           e.preventDefault()
-          if (sel < 0) return select(0)
-          const r = ROW(sel)
-          const c = COL(sel)
-          if (e.key === 'ArrowLeft' && c === 0) return
-          if (e.key === 'ArrowRight' && c === 8) return
-          if (e.key === 'ArrowUp' && r === 0) return
-          if (e.key === 'ArrowDown' && r === 8) return
-          select(sel + move)
+          if (!selSet.size) return select(0, false)
+          const i = [...selSet][selSet.size - 1]
+          const r = ROW(i)
+          const c = COL(i)
+          if (k === 'ArrowLeft' && c === 0) return
+          if (k === 'ArrowRight' && c === 8) return
+          if (k === 'ArrowUp' && r === 0) return
+          if (k === 'ArrowDown' && r === 8) return
+          select(i + move, e.shiftKey)
         }
       }
 
@@ -6009,6 +6183,64 @@ window.__ModuleLoader__.load({
         window.clearInterval(timer)
         wrap.remove()
       })
+
+      const applyPuzzle = (idx, keepProgress) => {
+        curIdx = idx
+        const pz = puzzles[idx] || {}
+        cages = pz.cages || []
+        cageStart = new Set()
+        cageSum = new Map()
+        cages.forEach((c) => {
+          const start = Math.min(...c.cells)
+          cageStart.add(start)
+          cageSum.set(start, c.sum)
+        })
+        marks = blankMarks()
+        selSet = new Set()
+        done = false
+        startedAt = 0
+        window.clearInterval(timer)
+        $('[data-timer]').textContent = ''
+        if (keepProgress) {
+          const saved = readJson(puzzleKey())
+          if (saved && Array.isArray(saved.marks) && saved.marks.length === 81) {
+            marks = saved.marks.map((m) => ({
+              v: Number(m && m.v) || 0,
+              p: Array.isArray(m && m.p) ? m.p.slice() : [],
+              u: Array.isArray(m && m.u) ? m.u.slice() : [],
+            }))
+            startedAt = Number(saved.startedAt) || 0
+            if (startedAt) tickTimer()
+          }
+        }
+        $('[data-day]').textContent =
+          day + (pz.number ? ' · #' + pz.number : '') + (curSource === 'generated' ? ' · 自动出题' : '')
+        renderSel()
+        build()
+      }
+
+      const renderSel = () => {
+        selEl.textContent = ''
+        if (puzzles.length < 2) return
+        const bar = document.createElement('div')
+        bar.style.cssText = 'display:flex;gap:6px;justify-content:center;padding:8px 0 0'
+        puzzles.forEach((pz, idx) => {
+          const b = document.createElement('button')
+          b.textContent = String(idx + 1)
+          b.title = '#' + pz.number
+          b.style.cssText =
+            'min-width:34px;height:26px;border-radius:8px;border:1px solid ' +
+            (idx === curIdx ? '#7ea8e0' : '#dbe4f0') +
+            ';background:' +
+            (idx === curIdx ? '#e6f0ff' : '#fff') +
+            ';font:600 12px system-ui;cursor:pointer'
+          b.addEventListener('click', () => {
+            if (idx !== curIdx) applyPuzzle(idx, true)
+          })
+          bar.appendChild(b)
+        })
+        selEl.appendChild(bar)
+      }
 
       api(auth.server, '/api/killer/today', { token: auth.token })
         .then((r) => {
@@ -6024,11 +6256,7 @@ window.__ModuleLoader__.load({
         .catch((e) => {
           bodyEl.textContent = '题目加载失败：' + friendly(e)
         })
-        .catch((e) => {
-          bodyEl.textContent = '题目加载失败：' + friendly(e)
-        })
     }
-
     function SocialView(props) {
       const [auth, setAuth] = useState(() => readJson(K_AUTH))
       const [gameOpen, setGameOpen] = useState(false)
