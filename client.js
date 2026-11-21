@@ -324,7 +324,7 @@ window.__ModuleLoader__.load({
 .sc-friend-last{font-size:11px;color:var(--dsw-alias-label-tertiary,#8b949e);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 .sc-main{flex:1;min-width:0;display:flex;flex-direction:column}
-.sc-thread{flex:1;min-height:0;overflow:auto;padding:18px 18px 86px}
+.sc-thread{flex:1;min-height:0;overflow:auto;padding:18px}
 .sc-thread-inner{max-width:760px;margin:0 auto;display:flex;flex-direction:column;gap:10px}
 .sc-msg{display:flex;flex-direction:column;align-items:flex-start;gap:3px;max-width:100%}
 .sc-msg.mine{align-items:flex-end}
@@ -464,7 +464,7 @@ window.__ModuleLoader__.load({
   .sc-side-title{padding:10px 10px 4px}
   .sc-friend-last{display:none}
   .sc-chat-sub{display:none}
-  .sc-thread{padding:12px 12px 78px}
+  .sc-thread{padding:12px}
   .sc-thread-inner{gap:8px}
   .sc-composer{padding:8px 10px 10px}
   .sc-share{padding:6px 10px}
@@ -877,6 +877,7 @@ window.__ModuleLoader__.load({
       const listRef = useRef(null)
       const headRef = useRef(null)
       const composerRef = useRef(null)
+      const chatRef = useRef(null)
       const activeRef = useRef(null)
       const friendsKeyRef = useRef('')
       const fileRef = useRef(null)
@@ -1015,16 +1016,17 @@ window.__ModuleLoader__.load({
         }
       }, [active, messages.length])
 
-      // 顶栏和输入框是绝对定位钉住的，列表要给它们让出上下空间
-      // 高度实测而不是写死——按钮换行、输入框变高都不会压到消息
+      // 顶栏和输入框是绝对定位钉住的；给整个主体让出位置，
+      // 这样侧栏顶部那排（对方 ID / 添加 / 建群）不会被顶栏盖住
       useEffect(() => {
         const measure = () => {
-          const th = listRef.current
-          if (!th) return
+          const chat = chatRef.current
           const head = headRef.current
           const comp = composerRef.current
-          th.style.paddingTop = (head ? head.offsetHeight + 10 : 18) + 'px'
-          th.style.paddingBottom = (comp ? comp.offsetHeight + 10 : 86) + 'px'
+          if (chat) {
+            chat.style.paddingTop = (head ? head.offsetHeight : 0) + 'px'
+            chat.style.paddingBottom = (comp ? comp.offsetHeight : 0) + 'px'
+          }
         }
         measure()
         const timers = [80, 350].map((d) => window.setTimeout(measure, d))
@@ -1470,7 +1472,7 @@ window.__ModuleLoader__.load({
 
       return h(
         'div',
-        { className: 'sc-chat' },
+        { className: 'sc-chat', ref: chatRef },
         /* 顶栏 */
         h(
           'div',
