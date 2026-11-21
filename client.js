@@ -4698,6 +4698,39 @@ window.__ModuleLoader__.load({
         return () => window.clearTimeout(timer)
       }, [])
 
+      /**
+       * 把面板钉成「视口剩余高度」。
+       * slot 容器不一定给确定高度，`height:100%` 会退化成内容高度，
+       * 结果是整个面板比窗口还高、滚的是外层页面，输入框被顶到视口外。
+       * 这里按 root 的实际 top 量一次，剩下的都交给内部列表自己滚。
+       */
+      useEffect(() => {
+        const el = rootRef.current
+        if (!el) return
+        const fit = () => {
+          const rect = el.getBoundingClientRect()
+          const top = Math.max(0, Math.round(rect.top))
+          const h = Math.max(320, window.innerHeight - top - 6)
+          el.style.height = h + 'px'
+          el.style.maxHeight = h + 'px'
+          el.style.overflow = 'hidden'
+        }
+        fit()
+        const timers = [60, 260, 900].map((d) => window.setTimeout(fit, d))
+        window.addEventListener('resize', fit)
+        let ro = null
+        const parent = el.parentElement
+        if (parent && typeof ResizeObserver !== 'undefined') {
+          ro = new ResizeObserver(() => fit())
+          ro.observe(parent)
+        }
+        return () => {
+          for (const t of timers) window.clearTimeout(t)
+          window.removeEventListener('resize', fit)
+          if (ro) ro.disconnect()
+        }
+      }, [auth])
+
       const body = !auth
         ? h(LoginPanel, { onDone: (next) => setAuth(next) })
         : h(ChatPanel, {
