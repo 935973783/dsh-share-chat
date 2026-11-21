@@ -5718,11 +5718,12 @@ window.__ModuleLoader__.load({
         '<b style="font-size:14px">🧩 杀手数独</b>' +
         '<span data-day style="font-size:12px;color:#7b8ca6"></span>' +
         '<span data-stars style="font-size:12px;color:#d99a1f;font-weight:600"></span>' +
+        '<button data-shop style="padding:4px 9px;border-radius:8px;border:1px solid #ffdca8;background:#fff8ec;color:#9a6a12;font:600 12px system-ui;cursor:pointer">🛍 商店</button>' +
         '<span data-timer style="font-size:12px;color:#7b8ca6;margin-left:auto"></span>' +
         '<button data-close style="padding:5px 9px;border-radius:8px;border:1px solid #dbe4f0;background:#fff;cursor:pointer">✕</button>' +
         '</div>' +
-        '<div style="display:flex;flex:1;min-height:0">' +
-        '<div style="flex:0 0 auto;overflow:auto;padding:10px 12px 12px">' +
+        '<div style="display:flex;flex:1;min-height:0;position:relative">' +
+        '<div data-left style="flex:0 0 auto;overflow:auto;padding:10px 12px 12px;background:#fff">' +
         '<div data-sel></div>' +
         '<div data-body></div>' +
         '</div>' +
@@ -5738,6 +5739,7 @@ window.__ModuleLoader__.load({
       const selEl = $('[data-sel]')
       const dynEl = $('[data-dyn]')
       const calcEl = $('[data-calc]')
+      const leftEl = $('[data-left]')
 
       const ROW = (i) => (i / 9) | 0
       const COL = (i) => i % 9
@@ -6100,6 +6102,131 @@ window.__ModuleLoader__.load({
 
       buildCalc()
 
+      /* ---------- 背景商店 ---------- */
+      let shop = { items: [], owned: ['plain'], equipped: 'plain' }
+
+      const applyBg = () => {
+        const item = shop.items.find((x) => x.id === shop.equipped) || { css: '#ffffff' }
+        leftEl.style.background = item.css
+      }
+
+      const loadShop = async () => {
+        try {
+          const r = await api(auth.server, '/api/killer/shop', { token: auth.token })
+          shop = { items: r.items || [], owned: r.owned || ['plain'], equipped: r.equipped || 'plain' }
+          myStars = Number(r.myStars) || myStars
+          renderStars()
+          applyBg()
+        } catch (e) {}
+      }
+
+      const openShop = () => {
+        const old = wrap.querySelector('[data-shop-panel]')
+        if (old) {
+          old.remove()
+          return
+        }
+        const panel = document.createElement('div')
+        panel.setAttribute('data-shop-panel', '1')
+        panel.style.cssText = [
+          'position:absolute',
+          'inset:0',
+          'z-index:5',
+          'background:rgba(251,252,254,.98)',
+          'padding:14px',
+          'overflow:auto',
+        ].join(';')
+
+        const head = document.createElement('div')
+        head.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:10px'
+        const t = document.createElement('b')
+        t.textContent = '⭐ 星星兑换'
+        t.style.cssText = 'font-size:13px'
+        const cnt = document.createElement('span')
+        cnt.textContent = '我的星星 ' + myStars
+        cnt.style.cssText = 'font-size:12px;color:#d99a1f;font-weight:600'
+        const close = document.createElement('button')
+        close.textContent = '返回'
+        close.style.cssText =
+          'margin-left:auto;padding:4px 10px;border-radius:8px;border:1px solid #dbe4f0;background:#fff;font:600 12px system-ui;cursor:pointer'
+        close.addEventListener('click', () => panel.remove())
+        head.appendChild(t)
+        head.appendChild(cnt)
+        head.appendChild(close)
+        panel.appendChild(head)
+
+        const grid = document.createElement('div')
+        grid.style.cssText = 'display:grid;grid-template-columns:repeat(3,1fr);gap:10px'
+        for (const item of shop.items) {
+          const owned = shop.owned.includes(item.id)
+          const equipped = shop.equipped === item.id
+          const card = document.createElement('div')
+          card.style.cssText =
+            'border:1px solid ' +
+            (equipped ? '#7ea8e0' : '#e3eaf4') +
+            ';border-radius:12px;overflow:hidden;background:#fff;display:flex;flex-direction:column'
+          const prev = document.createElement('div')
+          prev.style.cssText = 'height:76px;background:' + item.css + ';border-bottom:1px solid #eef2f8'
+          card.appendChild(prev)
+          const nm = document.createElement('div')
+          nm.textContent = item.name
+          nm.style.cssText = 'font-size:12px;font-weight:600;padding:6px 8px 0'
+          card.appendChild(nm)
+          const cost = document.createElement('div')
+          cost.textContent = item.cost ? '★ ' + item.cost : '默认'
+          cost.style.cssText = 'font-size:11px;color:#93a3ba;padding:0 8px 6px'
+          card.appendChild(cost)
+          const btn = document.createElement('button')
+          btn.textContent = equipped ? '使用中' : owned ? '使用' : myStars >= item.cost ? '兑换' : '星星不足'
+          btn.disabled = equipped || (!owned && myStars < item.cost)
+          btn.style.cssText =
+            'margin:0 8px 8px;padding:5px 0;border-radius:8px;border:1px solid ' +
+            (equipped ? '#7ea8e0' : '#dbe4f0') +
+            ';background:' +
+            (equipped ? '#e6f0ff' : owned ? '#fff' : '#fff8ec') +
+            ';color:' +
+            (equipped ? '#3f6fa8' : owned ? '#1f2a37' : '#9a6a12') +
+            ';font:600 12px system-ui;cursor:pointer;opacity:' +
+            (btn.disabled ? '0.6' : '1')
+          btn.addEventListener('click', async () => {
+            try {
+              if (!owned) {
+                const r = await api(auth.server, '/api/killer/buy', {
+                  method: 'POST',
+                  token: auth.token,
+                  body: { id: item.id },
+                })
+                shop.owned = r.owned
+                myStars = Number(r.myStars) || myStars - item.cost
+                renderStars()
+              }
+              const e2 = await api(auth.server, '/api/killer/equip', {
+                method: 'POST',
+                token: auth.token,
+                body: { id: item.id },
+              })
+              shop.equipped = e2.equipped || item.id
+              applyBg()
+              panel.remove()
+              openShop()
+            } catch (err) {
+              onToast('没换成：' + friendly(err))
+            }
+          })
+          card.appendChild(btn)
+          grid.appendChild(card)
+        }
+        panel.appendChild(grid)
+        const hint = document.createElement('div')
+        hint.textContent = '星星来自每天解出的题：难度越高，给的星越多。'
+        hint.style.cssText = 'font-size:11px;color:#a7b6c9;margin-top:10px'
+        panel.appendChild(hint)
+        $('[data-body]').parentElement.parentElement.appendChild(panel)
+      }
+
+      $('[data-shop]').addEventListener('click', openShop)
+
+
 
       const select = (i, additive) => {
         if (!additive) selSet = new Set([i])
@@ -6408,6 +6535,7 @@ window.__ModuleLoader__.load({
           curSource = r.source || ''
           myStars = Number(r.myStars) || 0
           renderStars()
+          loadShop()
           puzzles = Array.isArray(r.puzzles) ? r.puzzles : []
           if (!puzzles.length) {
             bodyEl.textContent = '今天没有题目'
