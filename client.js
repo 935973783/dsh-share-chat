@@ -5749,6 +5749,13 @@ window.__ModuleLoader__.load({
       let timer = null
       let done = false
       let pencilMode = false
+      let dragSel = null
+
+      // 松开鼠标就结束拖选（不管松在哪个格子）
+      const endDrag = () => {
+        dragSel = null
+      }
+      window.addEventListener('mouseup', endDrag)
 
       const fmt = (ms) => {
         const s = Math.floor(ms / 1000)
@@ -5973,7 +5980,7 @@ window.__ModuleLoader__.load({
         const tip = document.createElement('div')
         tip.style.cssText = 'font-size:11px;color:#93a3ba;line-height:1.6'
         tip.innerHTML =
-          '点格子选中（Shift 点选多个）· 1–9 填数（再按取消）· <b>Shift+1–9</b> 加铅笔标记 · <b>U</b> 给标记划线 · <b>C</b> 清空选中 · <b>P</b> 铅笔模式 · 方向键移动'
+          '<b>按住左键拖过去</b>刷选多格（Shift 拖 = 取消选）· 1–9 填数（再按取消）· <b>Shift+1–9</b> 加候选 · <b>U</b> 划线 · <b>C</b> 清空选中 · <b>P</b> 铅笔模式 · 方向键移动'
         box.appendChild(tip)
 
         panelEl.appendChild(box)
@@ -6090,7 +6097,21 @@ window.__ModuleLoader__.load({
             'border-top:' + edge(topBox, topCage), 'border-left:' + edge(leftBox, leftCage),
             'border-bottom:' + edge(bottomBox, bottomCage), 'border-right:' + edge(rightBox, rightCage),
           ].join(';')
-          cell.addEventListener('click', (e) => select(i, e.shiftKey))
+          cell.addEventListener('mousedown', (e) => {
+            if (e.button !== 0) return
+            e.preventDefault()
+            dragSel = { add: !e.shiftKey }
+            if (!e.shiftKey) selSet = new Set([i])
+            else if (selSet.has(i)) selSet.delete(i)
+            else selSet.add(i)
+            paint()
+          })
+          cell.addEventListener('mouseenter', () => {
+            if (!dragSel) return
+            if (dragSel.add) selSet.add(i)
+            else selSet.delete(i)
+            paint()
+          })
           board.appendChild(cell)
           cells.push(cell)
         }
