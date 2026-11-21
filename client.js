@@ -493,6 +493,7 @@ window.__ModuleLoader__.load({
 .sc-btn-primary:hover{background:linear-gradient(135deg,#ff4b96,#9a58ff);border-color:transparent}
 /* 侧栏 */
 .sc-side{background:linear-gradient(180deg,#fff5fa 0%,#f4f9ff 100%);border-right:2px solid #ffe3f0}
+.sc-contacts{display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden}
 .sc-side-title{color:#b14a86;letter-spacing:.6px}
 .sc-add .sc-input{border:1.5px solid #ffd3e6;border-radius:12px;background:#fff}
 .sc-add .sc-input:focus{border-color:#ff9ec4;box-shadow:0 0 0 3px rgba(255,158,196,.25);outline:none}
@@ -1051,6 +1052,62 @@ window.__ModuleLoader__.load({
         }
       }, [active])
 
+      /** 右键菜单：打开 / 不显示该聊天 / 恢复显示 */
+      const showConvMenu = (x, y, conv) => {
+        const old = document.getElementById('dsh-conv-menu')
+        if (old) old.remove()
+        const menu = document.createElement('div')
+        menu.id = 'dsh-conv-menu'
+        menu.style.cssText = [
+          'position:fixed',
+          'left:' + Math.min(x, window.innerWidth - 170) + 'px',
+          'top:' + Math.min(y, window.innerHeight - 90) + 'px',
+          'z-index:2147483647',
+          'min-width:150px',
+          'padding:6px',
+          'border-radius:10px',
+          'background:rgba(28,30,34,.96)',
+          'border:1px solid rgba(255,255,255,.14)',
+          'box-shadow:0 14px 34px rgba(0,0,0,.35)',
+          'display:flex',
+          'flex-direction:column',
+          'gap:2px',
+        ].join(';')
+        const mk = (label, fn, danger) => {
+          const b = document.createElement('button')
+          b.textContent = label
+          b.style.cssText =
+            'text-align:left;padding:7px 10px;border-radius:7px;border:none;background:transparent;color:' +
+            (danger ? '#ffb4c8' : '#e8eaed') +
+            ';font:13px system-ui;cursor:pointer'
+          b.addEventListener('mouseenter', () => (b.style.background = 'rgba(255,255,255,.1)'))
+          b.addEventListener('mouseleave', () => (b.style.background = 'transparent'))
+          b.addEventListener('click', () => {
+            menu.remove()
+            fn()
+          })
+          return b
+        }
+        menu.appendChild(
+          mk('打开聊天', () => {
+            setActive(conv.key)
+            setSideTab('chats')
+            if (conv.hidden) hideChat(conv.key, false)
+          }),
+        )
+        if (conv.hidden) {
+          menu.appendChild(mk('恢复显示该聊天', () => hideChat(conv.key, false)))
+        } else {
+          menu.appendChild(mk('不显示该聊天', () => hideChat(conv.key, true), true))
+        }
+        document.body.appendChild(menu)
+        const close = () => {
+          menu.remove()
+          document.removeEventListener('mousedown', close, true)
+        }
+        setTimeout(() => document.addEventListener('mousedown', close, true), 0)
+      }
+
       /** 不显示 / 恢复某个会话（只影响列表，好友关系不动） */
       const hideChat = async (key, hidden) => {
         try {
@@ -1510,6 +1567,55 @@ window.__ModuleLoader__.load({
         )
       }
 
+      /** 通讯录页：右侧内容区整块变成好友列表 */
+      const contactsPane =
+        sideTab === 'contacts'
+          ? h(
+              'div',
+              { className: 'sc-contacts' },
+              h('div', { className: 'sc-side-title', style: { padding: '14px 16px 6px' } }, '通讯录'),
+              h(
+                'div',
+                { style: { flex: 1, minHeight: 0, overflow: 'auto', padding: '0 12px 12px' } },
+                convs.length === 0
+                  ? emptyState('👥', '通讯录是空的', '在左边输入对方 ID 加好友，或者建一个群')
+                  : convs.map((c) =>
+                      h(
+                        'div',
+                        {
+                          key: 'ct-' + c.key,
+                          className: 'sc-friend',
+                          title: c.key,
+                          onClick: () => {
+                            setActive(c.key)
+                            setSideTab('chats')
+                            if (c.hidden) hideChat(c.key, false)
+                          },
+                          onContextMenu: (e) => {
+                            e.preventDefault()
+                            showConvMenu(e.clientX, e.clientY, c)
+                          },
+                        },
+                        c.kind === 'group'
+                          ? avatar(c.title, c.key, 34, c.avatar, true)
+                          : avatar(c.title, c.key, 34, c.avatar),
+                        h(
+                          'div',
+                          { className: 'sc-friend-main' },
+                          h('div', { className: 'sc-friend-name' }, c.title),
+                          h(
+                            'div',
+                            { className: 'sc-friend-last' },
+                            c.kind === 'group' ? c.members.length + ' 人' : '@' + c.key,
+                          ),
+                        ),
+                        c.hidden ? h('span', { className: 'sc-chip' }, '已隐藏') : null,
+                      ),
+                    ),
+              ),
+            )
+          : null
+
       return h(
         'div',
         { className: 'sc-chat', ref: chatRef },
@@ -1695,7 +1801,12 @@ window.__ModuleLoader__.load({
                         className: 'sc-friend' + (active === c.key ? ' on' : ''),
                         onClick: () => {
                           setActive(c.key)
+                          setSideTab('chats')
                           if (c.hidden) hideChat(c.key, false)
+                        },
+                        onContextMenu: (e) => {
+                          e.preventDefault()
+                          showConvMenu(e.clientX, e.clientY, c)
                         },
                         title: c.key,
                         // 会话卡片直接用这个会话的聊天背景铺满
@@ -1714,19 +1825,6 @@ window.__ModuleLoader__.load({
                         ),
                         h('div', { className: 'sc-friend-last' }, previewOf(lastOf(c.key)) || '还没有消息'),
                       ),
-                      h(
-                        'button',
-                        {
-                          className: 'sc-btn sc-btn-sm sc-btn-ghost',
-                          title: c.hidden ? '恢复显示这个会话' : '不显示该聊天（好友还在通讯录）',
-                          onClick: (e) => {
-                            e.stopPropagation()
-                            hideChat(c.key, !c.hidden)
-                          },
-                          style: { padding: '0 6px', minWidth: '24px', fontSize: '11px', flex: '0 0 auto' },
-                        },
-                        c.hidden ? '显示' : '✕',
-                      ),
                     ),
                   ),
             ),
@@ -1734,6 +1832,7 @@ window.__ModuleLoader__.load({
           h(
             'div',
             { className: 'sc-main' },
+            sideTab === 'contacts' ? contactsPane : null,
             current
               ? h(
                   'div',
@@ -1840,7 +1939,7 @@ window.__ModuleLoader__.load({
               : null,
             h(
               'div',
-              { className: 'sc-thread', ref: listRef, style: bgStyle(bgOf(active)) },
+              { className: 'sc-thread', ref: listRef, style: Object.assign({}, bgStyle(bgOf(active)), sideTab === 'contacts' ? { display: 'none' } : {}) },
               h(
                 'div',
                 { className: 'sc-thread-inner' },
@@ -1853,7 +1952,7 @@ window.__ModuleLoader__.load({
             ),
             h(
               'div',
-              { className: 'sc-composer', ref: composerRef },
+              { className: 'sc-composer', ref: composerRef, style: sideTab === 'contacts' ? { display: 'none' } : undefined },
               h(
                 'div',
                 { className: 'sc-composer-inner' },
