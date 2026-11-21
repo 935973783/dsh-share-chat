@@ -4971,6 +4971,7 @@ window.__ModuleLoader__.load({
 
       document.body.appendChild(wrap)
       attachScaler(wrap, 'ktv')
+      attachDragger(wrap, 'ktv')
 
       const $ = (s) => wrap.querySelector(s)
       const codeEl = $('[data-code]')
@@ -5546,6 +5547,7 @@ window.__ModuleLoader__.load({
         '<div data-body style="flex:1;min-height:0;overflow:auto;padding:10px 12px"></div>'
       document.body.appendChild(wrap)
       attachScaler(wrap, 'mahjong')
+      attachDragger(wrap, 'mahjong')
 
       const $ = (s) => wrap.querySelector(s)
       const bodyEl = $('[data-body]')
@@ -5852,6 +5854,44 @@ window.__ModuleLoader__.load({
     }
 
 
+
+    /** 让浮动窗口能用标题栏拖动，位置按窗口分别记在本地 */
+    function attachDragger(el, key) {
+      const SK = 'dsh-share-chat.pos.' + key
+      const handle = el.firstElementChild
+      if (!handle) return
+      const place = (x, y) => {
+        const w = el.offsetWidth || 200
+        x = Math.min(Math.max(-w + 80, x), window.innerWidth - 80)
+        y = Math.min(Math.max(0, y), window.innerHeight - 44)
+        el.style.left = x + 'px'
+        el.style.top = y + 'px'
+        el.style.right = 'auto'
+        el.style.bottom = 'auto'
+      }
+      const r0 = el.getBoundingClientRect()
+      const saved = readJson(SK)
+      if (saved && typeof saved.x === 'number' && typeof saved.y === 'number') place(saved.x, saved.y)
+      else place(r0.left, r0.top)
+      handle.style.cursor = 'move'
+      handle.style.userSelect = 'none'
+      handle.addEventListener('mousedown', (e) => {
+        if (e.target && e.target.closest && e.target.closest('button')) return
+        e.preventDefault()
+        const r = el.getBoundingClientRect()
+        const dx = e.clientX - r.left
+        const dy = e.clientY - r.top
+        const move = (ev) => place(ev.clientX - dx, ev.clientY - dy)
+        const up = () => {
+          document.removeEventListener('mousemove', move)
+          document.removeEventListener('mouseup', up)
+          const rr = el.getBoundingClientRect()
+          writeJson(SK, { x: rr.left, y: rr.top })
+        }
+        document.addEventListener('mousemove', move)
+        document.addEventListener('mouseup', up)
+      })
+    }
     /** 给浮动窗口加一个等比缩放手柄（右下角），比例按窗口分别记在本地 */
     function attachScaler(el, key) {
       const SK = 'dsh-share-chat.scale.' + key
@@ -5947,6 +5987,7 @@ window.__ModuleLoader__.load({
         '</div>'
       document.body.appendChild(wrap)
       attachScaler(wrap, 'killer')
+      attachDragger(wrap, 'killer')
 
       const $ = (s) => wrap.querySelector(s)
       const bodyEl = $('[data-body]')
