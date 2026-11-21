@@ -5756,6 +5756,36 @@ window.__ModuleLoader__.load({
       let done = false
       let pencilMode = false
       let dragSel = null
+      // 被玩家判定为「不可能」的组合：key = c<笼号>:<数字> 或 k<和>-<格数>:<数字>
+      let offCombos = new Set()
+
+      /** 组合做成开关按钮：亮＝可能，灰＝已排除；点一下切换，状态跨选格保留 */
+      const comboBtn = (digits, key) => {
+        const b = document.createElement('button')
+        const isOff = offCombos.has(key)
+        b.textContent = digits
+        b.style.cssText = [
+          'font:600 12.5px ui-monospace,monospace',
+          'padding:5px 10px',
+          'border-radius:9px',
+          'cursor:pointer',
+          'letter-spacing:0.5px',
+          'transition:background .12s,color .12s,border-color .12s',
+          'border:1px solid ' + (isOff ? '#dfe5ee' : '#a9c6ee'),
+          'background:' + (isOff ? '#f1f4f8' : '#e8f1ff'),
+          'color:' + (isOff ? '#b3bfcf' : '#2f558a'),
+          isOff ? 'text-decoration:line-through' : '',
+        ]
+          .filter(Boolean)
+          .join(';')
+        b.addEventListener('click', () => {
+          if (offCombos.has(key)) offCombos.delete(key)
+          else offCombos.add(key)
+          save()
+          paint()
+        })
+        return b
+      }
 
       // 松开鼠标就结束拖选（不管松在哪个格子）
       const endDrag = () => {
@@ -5779,6 +5809,7 @@ window.__ModuleLoader__.load({
         try {
           writeJson(puzzleKey(), {
             marks: marks.map((m) => ({ v: m.v, p: m.p, u: m.u })),
+            off: [...offCombos],
             startedAt,
           })
         } catch (e) {}
@@ -5925,9 +5956,11 @@ window.__ModuleLoader__.load({
 
           let list = null
           let label = ''
+          let cageId = -1
           if (selSet.size === 1) {
             const i = [...selSet][0]
-            const cage = cages[owner[i]]
+            cageId = owner[i]
+            const cage = cages[cageId]
             if (cage) {
               const used = cage.cells.filter((k) => g[k] > 0).map((k) => g[k])
               const restSum = cage.sum - used.reduce((a, b) => a + b, 0)
@@ -5939,7 +5972,8 @@ window.__ModuleLoader__.load({
           } else if (selSet.size > 1) {
             const owners = new Set([...selSet].map((k) => owner[k]))
             if (owners.size === 1 && cages[[...owners][0]]) {
-              const cage = cages[[...owners][0]]
+              cageId = [...owners][0]
+              const cage = cages[cageId]
               if (selSet.size === cage.cells.length) {
                 const used = cage.cells.filter((k) => g[k] > 0).map((k) => g[k])
                 const restSum = cage.sum - used.reduce((a, b) => a + b, 0)
@@ -5962,11 +5996,7 @@ window.__ModuleLoader__.load({
             head.textContent = label
             if (list && list.length) {
               for (const c of list.slice(0, 60)) {
-                const t = document.createElement('span')
-                t.textContent = c.join('')
-                t.style.cssText =
-                  'font:600 11px ui-monospace,monospace;padding:2px 6px;border-radius:6px;background:#eef3fb;color:#3f5f8a'
-                bodyC.appendChild(t)
+                bodyC.appendChild(comboBtn(c.join(''), 'c' + cageId + ':' + c.join('')))
               }
             } else if (list) {
               const t = document.createElement('span')
@@ -6022,11 +6052,7 @@ window.__ModuleLoader__.load({
           }
           outC.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;min-height:20px;margin-top:8px'
           for (const c of list.slice(0, 60)) {
-            const t = document.createElement('span')
-            t.textContent = c.join('')
-            t.style.cssText =
-              'font:600 11px ui-monospace,monospace;padding:2px 6px;border-radius:6px;background:#fff6e8;color:#8a5b1f'
-            outC.appendChild(t)
+            outC.appendChild(comboBtn(c.join(''), 'k' + s + '-' + n + ':' + c.join('')))
           }
         })
         calc.appendChild(lab)
@@ -6282,6 +6308,7 @@ window.__ModuleLoader__.load({
         $('[data-timer]').textContent = ''
         if (keepProgress) {
           const saved = readJson(puzzleKey())
+          offCombos = new Set(Array.isArray(saved && saved.off) ? saved.off : [])
           if (saved && Array.isArray(saved.marks) && saved.marks.length === 81) {
             marks = saved.marks.map((m) => ({
               v: Number(m && m.v) || 0,
