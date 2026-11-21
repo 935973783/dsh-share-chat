@@ -6172,30 +6172,23 @@ window.__ModuleLoader__.load({
           let list = null
           let label = ''
           let cageId = -1
-          if (selSet.size === 1) {
-            const i = [...selSet][0]
-            cageId = owner[i]
-            const cage = cages[cageId]
-            if (cage) {
-              const used = cage.cells.filter((k) => g[k] > 0).map((k) => g[k])
-              const restSum = cage.sum - used.reduce((a, b) => a + b, 0)
-              const restN = cage.cells.length - used.length
-              list = combos(restSum, restN).filter((c) => !c.some((d) => used.includes(d)))
-              label =
-                '这个笼的组合（' + restSum + ' / ' + restN + ' 格）' + (list.length ? '：' + list.length + ' 种' : '：无解')
-            }
-          } else if (selSet.size > 1) {
+          // 选中都在同一个笼里时，永远按「笼最初的和与格数」给全部组合：
+          // 不管选了几格、也不管已经填了什么。跨笼选择则不显示组合。
+          if (selSet.size >= 1) {
             const owners = new Set([...selSet].map((k) => owner[k]))
-            if (owners.size === 1 && cages[[...owners][0]]) {
-              cageId = [...owners][0]
-              const cage = cages[cageId]
-              if (selSet.size === cage.cells.length) {
-                const used = cage.cells.filter((k) => g[k] > 0).map((k) => g[k])
-                const restSum = cage.sum - used.reduce((a, b) => a + b, 0)
-                const restN = cage.cells.length - used.length
-                list = combos(restSum, restN).filter((c) => !c.some((d) => used.includes(d)))
+            if (owners.size === 1) {
+              const ci = [...owners][0]
+              const cage = cages[ci]
+              if (cage) {
+                cageId = ci
+                list = combos(cage.sum, cage.cells.length)
                 label =
-                  '整笼的组合（' + restSum + ' / ' + restN + ' 格）' + (list.length ? '：' + list.length + ' 种' : '：无解')
+                  '这个笼的组合（' +
+                  cage.sum +
+                  ' / ' +
+                  cage.cells.length +
+                  ' 格）' +
+                  (list.length ? '：' + list.length + ' 种' : '：无解')
               }
             }
           }
