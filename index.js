@@ -48,6 +48,78 @@ function pickTitle(snap) {
 }
 
 export function apply(ctx) {
+  // ── 问模型：走 DSH 自己的 LLM 服务（消耗当前账号额度）──
+  // 只在 loopback 下开放，公用部署直接 403。
+  ctx.inject(['webServer', 'llm'], (scope) => {
+    scope.effect(() =>
+      scope.webServer.register({
+        path: PREFIX + '/ask',
+        kind: 'exact',
+        resource: async (req) => {
+          if (!isLoopbackOrigin(scope)) {
+            return json(403, { error: 'not-loopback', hint: '公用部署下不开放模型调用' })
+          }
+          if (req.method !== 'POST') return json(405, { error: 'method' })
+          let prompt = ''
+          try {
+            const body = await req.json()
+            prompt = String(body && body.prompt ? body.prompt : '').slice(0, 4000)
+          } catch {
+            prompt = ''
+          }
+          if (!prompt) return json(400, { error: 'empty' })
+
+          const pickId = (v) =>
+            typeof v === 'string' ? v : (v && (v.id || v.provider || v.name || v.route)) || ''
+
+          try {
+            const providers = await Promise.resolve(scope.llm.listProviders())
+            const provider = pickId((providers || [])[0])
+            if (!provider) return json(503, { error: 'no-provider' })
+
+            let models = []
+            try {
+              models = await Promise.resolve(scope.llm.listModels(provider))
+            } catch {
+              models = []
+            }
+            const model = pickId((models || [])[0])
+            if (!model) return json(503, { error: 'no-model' })
+
+            const messages = [
+              {
+                role: 'system',
+                content: [
+                  {
+                    type: 'text',
+                    text: '你是聊天里的助手。用简体中文回答，300 字以内，直接给结论，不要客套和重复问题。',
+                  },
+                ],
+              },
+              { role: 'user', content: [{ type: 'text', text: prompt }] },
+            ]
+
+            let text = ''
+            for await (const chunk of scope.llm.stream({ provider, model, messages })) {
+              if (!chunk) continue
+              if (chunk.type === 'text-delta' && typeof chunk.text === 'string') {
+                text += chunk.text
+              } else if (chunk.type === 'finish' && chunk.reason && chunk.reason.kind === 'error') {
+                const f = chunk.reason.failure || {}
+                return json(502, { error: 'llm-error', detail: String(f.message || f.code || '') })
+              }
+            }
+            text = String(text || '').trim()
+            if (!text) return json(502, { error: 'empty-answer' })
+            return json(200, { text, provider, model })
+          } catch (e) {
+            return json(500, { error: 'ask-failed', detail: String((e && e.message) || e) })
+          }
+        },
+      }),
+    )
+  })
+
   ctx.inject(['webServer', 'sessionQuery'], (scope) => {
     // ── 会话列表 ──
     scope.effect(

@@ -870,6 +870,10 @@ window.__ModuleLoader__.load({
       const [myAvatar, setMyAvatar] = useState('')
       // Electron 里 window.prompt 不可用，所有需要输入的地方都走这个内联框
       const [inline, setInline] = useState(null)
+      const [askMode, setAskMode] = useState(() => readJson('dsh-share-chat.ask') === true)
+      useEffect(() => {
+        writeJson('dsh-share-chat.ask', askMode)
+      }, [askMode])
       const [bgMap, setBgMap] = useState(() => readJson(BG_KEY) || {})
       const [bgOpen, setBgOpen] = useState(false)
 
@@ -1068,10 +1072,25 @@ window.__ModuleLoader__.load({
         setSending(true)
         setErr('')
         try {
+          let out = text
+          if (askMode) {
+            // 先用 DSH 的模型回答，再把回答发给对方
+            const res = await fetch('/api/share-chat/ask', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ prompt: text }),
+            })
+            const j = await res.json().catch(() => null)
+            if (!res.ok || !j || !j.text) {
+              setErr('模型没答上来：' + ((j && (j.detail || j.error)) || res.status))
+              return
+            }
+            out = j.text
+          }
           await api(auth.server, '/api/messages', {
             method: 'POST',
             token: auth.token,
-            body: { to: active, text },
+            body: { to: active, text: out },
           })
           setDraft('')
           await pull()
@@ -1817,6 +1836,18 @@ window.__ModuleLoader__.load({
                       e.target.value = ''
                     },
                   }),
+                  h(
+                    'button',
+                    {
+                      className:
+                        'sc-btn ' + (askMode ? 'sc-btn-primary' : 'sc-btn-ghost') + ' sc-icon-btn',
+                      title: askMode
+                        ? '问模型已开：发出去的是模型的回答'
+                        : '打开后，你发的内容会先问模型，再把它的回答发出去',
+                      onClick: () => setAskMode((v) => !v),
+                    },
+                    askMode ? '🔮 问模型' : '🔮',
+                  ),
                   h('textarea', {
                     className: 'sc-textarea',
                     placeholder: active ? 'Enter 发送，Shift+Enter 换行' : '先选一个好友',
