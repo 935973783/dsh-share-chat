@@ -35,6 +35,16 @@ window.__ModuleLoader__.load({
 
     // ───────────────────────── 存取 ─────────────────────────
 
+    /** 每个会话各自的聊天背景，存在本地 */
+    const BG_KEY = 'dsh-share-chat.bg'
+    const BG_COLORS = ['#f7f3ea', '#eaf2fb', '#f0f7ee', '#fdf0f3', '#f3f0fb', '#fff8e6', '#eef6f7', '#f4f4f5']
+    const BG_GRADS = [
+      'linear-gradient(160deg,#e8f3ff,#f8fcff)',
+      'linear-gradient(160deg,#fff1e6,#fff9f4)',
+      'linear-gradient(160deg,#eaf7ee,#f7fdf9)',
+      'linear-gradient(160deg,#f3ecff,#fbf8ff)',
+    ]
+
     /** 记住上次打开的会话，下次进来自动落在那儿 */
     const LAST_CONV_KEY = 'dsh-share-chat.lastConv'
 
@@ -791,6 +801,8 @@ window.__ModuleLoader__.load({
       const [myAvatar, setMyAvatar] = useState('')
       // Electron 里 window.prompt 不可用，所有需要输入的地方都走这个内联框
       const [inline, setInline] = useState(null)
+      const [bgMap, setBgMap] = useState(() => readJson(BG_KEY) || {})
+      const [bgOpen, setBgOpen] = useState(false)
 
       const cursorRef = useRef(0)
       const listRef = useRef(null)
@@ -1024,6 +1036,77 @@ window.__ModuleLoader__.load({
       }
 
       /* 好友列表里的「最后一条」摘要 */
+      /* ---------- 聊天背景（按会话，存本地） ---------- */
+      const bgOf = (key) => (key && bgMap[key]) || null
+      const setBgFor = (key, bg) => {
+        if (!key) return
+        const next = Object.assign({}, bgMap)
+        if (bg) next[key] = bg
+        else delete next[key]
+        setBgMap(next)
+        writeJson(BG_KEY, next)
+      }
+      const bgStyle = (bg) => {
+        if (!bg) return {}
+        if (bg.type === 'color') return { background: bg.v }
+        if (bg.type === 'grad') return { backgroundImage: bg.v }
+        if (bg.type === 'image') {
+          return {
+            backgroundImage: 'url(' + auth.server + bg.v + ')',
+            backgroundSize: 'cover',
+            backgroundPosition: 'center',
+          }
+        }
+        return {}
+      }
+      const bgThumb = (bg, size) => {
+        if (!bg) return null
+        const s = size || 18
+        const st = {
+          width: s + 'px',
+          height: s + 'px',
+          borderRadius: '5px',
+          flex: '0 0 auto',
+          border: '1px solid rgba(128,128,128,.35)',
+          display: 'block',
+        }
+        if (bg.type === 'color') st.background = bg.v
+        else if (bg.type === 'grad') st.backgroundImage = bg.v
+        else if (bg.type === 'image') {
+          st.backgroundImage = 'url(' + auth.server + bg.v + ')'
+          st.backgroundSize = 'cover'
+          st.backgroundPosition = 'center'
+        }
+        return h('span', { style: st, title: '聊天背景' })
+      }
+      const uploadBg = (file) => {
+        if (!file || !active) return
+        const key = active
+        file
+          .arrayBuffer()
+          .then((buf) =>
+            fetch(auth.server + '/api/upload', {
+              method: 'POST',
+              headers: {
+                authorization: 'Bearer ' + auth.token,
+                'content-type': file.type || 'application/octet-stream',
+                'x-filename': encodeURIComponent(file.name || 'bg'),
+              },
+              body: buf,
+            }),
+          )
+          .then((r) => r.json())
+          .then((up) => {
+            if (up && up.id) {
+              setBgFor(key, { type: 'image', v: '/f/' + up.id })
+              setBgOpen(false)
+            } else {
+              setErr('背景上传失败')
+            }
+          })
+          .catch(() => setErr('背景上传失败'))
+      }
+
       /** 建群 / 拉人共用同一个内联输入框（Electron 没有 window.prompt） */
       const submitInline = async () => {
         const it = inline
@@ -1373,6 +1456,8 @@ window.__ModuleLoader__.load({
                         ),
                         h('div', { className: 'sc-friend-last' }, previewOf(lastOf(c.key)) || '还没有消息'),
                       ),
+                      // 卡片上也带一张聊天背景的缩略图，一眼认出这个会话
+                      bgThumb(bgOf(c.key), 18),
                     ),
                   ),
             ),
@@ -1383,32 +1468,110 @@ window.__ModuleLoader__.load({
             current
               ? h(
                   'div',
-                  {
-                    className: 'sc-side-title',
-                    style: { display: 'flex', alignItems: 'center', gap: '8px' },
-                  },
+                  { style: { flex: '0 0 auto' } },
                   h(
-                    'span',
-                    null,
-                    current.title + (isGroup ? '  ·  ' + current.members.length + ' 人' : ''),
+                    'div',
+                    {
+                      className: 'sc-side-title',
+                      style: { display: 'flex', alignItems: 'center', gap: '8px' },
+                    },
+                    h('span', null, current.title + (isGroup ? '  ·  ' + current.members.length + ' 人' : '')),
+                    h('span', { className: 'sc-grow' }),
+                    isGroup
+                      ? h(
+                          'button',
+                          {
+                            className: 'sc-btn sc-btn-sm',
+                            onClick: () => setInline({ mode: 'member', value: '' }),
+                            title: '拉人进群',
+                          },
+                          '＋人',
+                        )
+                      : null,
+                    h(
+                      'button',
+                      {
+                        className: 'sc-btn sc-btn-sm' + (bgOpen ? ' sc-btn-primary' : ''),
+                        onClick: () => setBgOpen((v) => !v),
+                        title: '换这个会话的聊天背景',
+                      },
+                      '🖼',
+                    ),
                   ),
-                  h('span', { className: 'sc-grow' }),
-                  isGroup
+                  bgOpen
                     ? h(
-                        'button',
+                        'div',
                         {
-                          className: 'sc-btn sc-btn-sm',
-                          onClick: () => setInline({ mode: 'member', value: '' }),
-                          title: '拉人进群',
+                          style: {
+                            display: 'flex',
+                            alignItems: 'center',
+                            flexWrap: 'wrap',
+                            gap: '6px',
+                            padding: '4px 14px 8px',
+                          },
                         },
-                        '＋人',
+                        BG_COLORS.map((c) =>
+                          h('span', {
+                            key: c,
+                            title: c,
+                            onClick: () => setBgFor(active, { type: 'color', v: c }),
+                            style: {
+                              width: '20px',
+                              height: '20px',
+                              borderRadius: '5px',
+                              cursor: 'pointer',
+                              background: c,
+                              border: '1px solid rgba(128,128,128,.35)',
+                            },
+                          }),
+                        ),
+                        BG_GRADS.map((g) =>
+                          h('span', {
+                            key: g,
+                            title: '渐变',
+                            onClick: () => setBgFor(active, { type: 'grad', v: g }),
+                            style: {
+                              width: '20px',
+                              height: '20px',
+                              borderRadius: '5px',
+                              cursor: 'pointer',
+                              backgroundImage: g,
+                              border: '1px solid rgba(128,128,128,.35)',
+                            },
+                          }),
+                        ),
+                        h(
+                          'button',
+                          {
+                            className: 'sc-btn sc-btn-sm',
+                            onClick: () => {
+                              const inp = document.createElement('input')
+                              inp.type = 'file'
+                              inp.accept = 'image/*'
+                              inp.addEventListener('change', () => {
+                                const f = inp.files && inp.files[0]
+                                if (f) uploadBg(f)
+                              })
+                              inp.click()
+                            },
+                          },
+                          '上传图片',
+                        ),
+                        h(
+                          'button',
+                          {
+                            className: 'sc-btn sc-btn-sm sc-btn-ghost',
+                            onClick: () => setBgFor(active, null),
+                          },
+                          '默认',
+                        ),
                       )
                     : null,
                 )
               : null,
             h(
               'div',
-              { className: 'sc-thread', ref: listRef },
+              { className: 'sc-thread', ref: listRef, style: bgStyle(bgOf(active)) },
               h(
                 'div',
                 { className: 'sc-thread-inner' },
