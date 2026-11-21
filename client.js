@@ -5872,18 +5872,27 @@ window.__ModuleLoader__.load({
         const box = document.createElement('div')
         box.style.cssText = 'display:flex;flex-direction:column;gap:8px'
 
-        // 选中的格子
+        // 选中信息：常显，没选就留一行灰字
         const selList = [...selSet]
+        const line = document.createElement('div')
+        line.style.cssText = 'font-size:12px;min-height:19px;font-weight:600'
+        if (!selList.length) {
+          line.textContent = '还没选格子 · 按住左键拖过去可以选多格'
+          line.style.color = '#a7b6c9'
+          line.style.fontWeight = '400'
+        } else {
+          const filled = selList.filter((i) => g[i] > 0)
+          const sum = filled.reduce((a, i) => a + g[i], 0)
+          line.textContent =
+            '选中 ' + selList.length + ' 格' + (filled.length ? ' · 已填和 ' + sum : '') + ' · 空格 ' + (selList.length - filled.length)
+          line.style.color = '#4a6a92'
+        }
+        box.appendChild(line)
+
         if (selList.length) {
           const filled = selList.filter((i) => g[i] > 0)
           const sum = filled.reduce((a, i) => a + g[i], 0)
-          const line = document.createElement('div')
-          line.style.cssText = 'font-size:12px;color:#4a6a92;font-weight:600'
-          line.textContent =
-            '选中 ' + selList.length + ' 格' + (filled.length ? ' · 已填和 ' + sum : '') + ' · 空格 ' + (selList.length - filled.length)
-          box.appendChild(line)
-
-          // 若选中的是同一个笼且已填满，给出是否等于笼和
+          // 若选中的是同一个笼，给出笼的目标与当前和
           const owners = new Set(selList.map((i) => owner[i]))
           if (owners.size === 1) {
             const ci = [...owners][0]
@@ -5894,11 +5903,11 @@ window.__ModuleLoader__.load({
               info.style.cssText = 'font-size:12px;color:#7b8ca6'
               info.textContent =
                 '这个笼 ' + cage.cells.length + ' 格 · 目标 ' + cage.sum + (wholeCage ? ' · 已填和 ' + sum : '')
-              box.appendChild(info)
               if (wholeCage && filled.length === selList.length && sum !== cage.sum) {
                 info.textContent += ' · 对不上'
                 info.style.color = '#d9534f'
               }
+              box.appendChild(info)
             }
           }
         }
