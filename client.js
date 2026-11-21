@@ -5855,7 +5855,11 @@ window.__ModuleLoader__.load({
 
 
 
-    /** 让浮动窗口能用标题栏拖动，位置按窗口分别记在本地 */
+    /**
+     * 让浮动窗口能用标题栏拖动，位置按窗口分别记在本地。
+     * 注意：窗口上有 transform: scale()，getBoundingClientRect 拿到的是缩放后的坐标，
+     * 拿它回写 left/top 会形成偏移反馈（越拖越偏左上）。所以全程用未变换的 offsetLeft/Top。
+     */
     function attachDragger(el, key) {
       const SK = 'dsh-share-chat.pos.' + key
       const handle = el.firstElementChild
@@ -5869,29 +5873,42 @@ window.__ModuleLoader__.load({
         el.style.right = 'auto'
         el.style.bottom = 'auto'
       }
-      const r0 = el.getBoundingClientRect()
       const saved = readJson(SK)
-      if (saved && typeof saved.x === 'number' && typeof saved.y === 'number') place(saved.x, saved.y)
-      else place(r0.left, r0.top)
+      if (saved && typeof saved.x === 'number' && typeof saved.y === 'number') {
+        place(saved.x, saved.y)
+      } else {
+        const r = el.getBoundingClientRect()
+        const sc = el.__scale || 1
+        place(r.left, r.top)
+        if (sc !== 1) {
+          // 首次接管时把缩放造成的视觉偏移换算回布局坐标
+          place(el.offsetLeft, el.offsetTop)
+        }
+      }
+
       handle.style.cursor = 'move'
       handle.style.userSelect = 'none'
       handle.addEventListener('mousedown', (e) => {
         if (e.target && e.target.closest && e.target.closest('button')) return
         e.preventDefault()
-        const r = el.getBoundingClientRect()
-        const dx = e.clientX - r.left
-        const dy = e.clientY - r.top
-        const move = (ev) => place(ev.clientX - dx, ev.clientY - dy)
+        const startX = el.offsetLeft
+        const startY = el.offsetTop
+        const mx = e.clientX
+        const my = e.clientY
+        const move = (ev) => {
+          const sc = el.__scale || 1
+          place(startX + (ev.clientX - mx) / sc, startY + (ev.clientY - my) / sc)
+        }
         const up = () => {
           document.removeEventListener('mousemove', move)
           document.removeEventListener('mouseup', up)
-          const rr = el.getBoundingClientRect()
-          writeJson(SK, { x: rr.left, y: rr.top })
+          writeJson(SK, { x: el.offsetLeft, y: el.offsetTop })
         }
         document.addEventListener('mousemove', move)
         document.addEventListener('mouseup', up)
       })
     }
+
     /** 给浮动窗口加一个等比缩放手柄（右下角），比例按窗口分别记在本地 */
     function attachScaler(el, key) {
       const SK = 'dsh-share-chat.scale.' + key
@@ -5899,6 +5916,7 @@ window.__ModuleLoader__.load({
       if (!(scale >= 0.6 && scale <= 1.6)) scale = 1
       el.style.transformOrigin = 'bottom right'
       const apply = () => {
+        el.__scale = scale
         el.style.transform = scale === 1 ? '' : 'scale(' + scale.toFixed(3) + ')'
       }
       apply()
