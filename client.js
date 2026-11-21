@@ -1692,7 +1692,7 @@ window.__ModuleLoader__.load({
             },
             '📹 开会',
           ),
-          h('button', { className: 'sc-btn', onClick: props.onOpenGame, title: '玩一把鱼塘摸鱼' }, '🎮 摸鱼'),
+          h('button', { className: 'sc-btn', onClick: props.onOpenGame, title: '玩一把鱼塘钓鱼' }, '🎮 钓鱼'),
           h(
             'button',
             {
@@ -2139,7 +2139,7 @@ window.__ModuleLoader__.load({
         ].join(';')
 
         const title = document.createElement('strong')
-        title.textContent = '鱼塘摸鱼'
+        title.textContent = '鱼塘钓鱼'
         title.style.cssText = 'font-size:12.5px'
 
         const meta = document.createElement('span')
@@ -2171,7 +2171,7 @@ window.__ModuleLoader__.load({
 
         const frame = document.createElement('iframe')
         frame.src = GAME_URL
-        frame.title = '鱼塘摸鱼'
+        frame.title = '鱼塘钓鱼'
         frame.setAttribute('allow', 'autoplay; clipboard-write')
         frame.style.cssText =
           'position:absolute;inset:0;width:100%;height:100%;border:0;background:#0b1d24'
@@ -2318,7 +2318,7 @@ window.__ModuleLoader__.load({
           h(
             'div',
             { className: 'sc-set-desc', style: { marginTop: '6px' } },
-            '「🎮 摸鱼」打开的窗口大小。窗口可以拖标题栏移动、拖右下角临时改大小；这里设的是默认值，保存在这台电脑的浏览器里。',
+            '「🎮 钓鱼」打开的窗口大小。窗口可以拖标题栏移动、拖右下角临时改大小；这里设的是默认值，保存在这台电脑的浏览器里。',
           ),
         ),
         h(
@@ -7443,7 +7443,7 @@ window.__ModuleLoader__.load({
           ),
         )
 
-        // 4) 设置 → 社交小游戏：改「🎮 摸鱼」窗口的默认大小
+        // 4) 设置 → 社交小游戏：改「🎮 钓鱼」窗口的默认大小
         ctx.slots.inject('settings.section', () =>
           ctx.slots.register(
             {
