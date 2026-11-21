@@ -306,7 +306,7 @@ window.__ModuleLoader__.load({
 
 /* 聊天外壳 */
 .sc-chat{flex:1;min-height:0;display:flex;flex-direction:column;position:relative}
-.sc-chat-head{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.20));flex:0 0 auto;position:sticky;top:0;z-index:6;background:var(--dsw-alias-bg-l1,Canvas);backdrop-filter:blur(8px)}
+.sc-chat-head{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.20));flex:0 0 auto;position:absolute;top:0;left:0;right:0;z-index:6;background:var(--dsw-alias-bg-l1,Canvas)}
 .sc-chat-name{font-size:13.5px;font-weight:600;line-height:1.2}
 .sc-chat-sub{font-size:11.5px;color:var(--dsw-alias-label-tertiary,#8b949e);line-height:1.3}
 .sc-chat-body{flex:1;min-height:0;display:flex}
@@ -810,6 +810,8 @@ window.__ModuleLoader__.load({
 
       const cursorRef = useRef(0)
       const listRef = useRef(null)
+      const headRef = useRef(null)
+      const composerRef = useRef(null)
       const activeRef = useRef(null)
       const friendsKeyRef = useRef('')
       const fileRef = useRef(null)
@@ -947,6 +949,33 @@ window.__ModuleLoader__.load({
           if (ro) ro.disconnect()
         }
       }, [active, messages.length])
+
+      // 顶栏和输入框是绝对定位钉住的，列表要给它们让出上下空间
+      // 高度实测而不是写死——按钮换行、输入框变高都不会压到消息
+      useEffect(() => {
+        const measure = () => {
+          const th = listRef.current
+          if (!th) return
+          const head = headRef.current
+          const comp = composerRef.current
+          th.style.paddingTop = (head ? head.offsetHeight + 10 : 18) + 'px'
+          th.style.paddingBottom = (comp ? comp.offsetHeight + 10 : 86) + 'px'
+        }
+        measure()
+        const timers = [80, 350].map((d) => window.setTimeout(measure, d))
+        window.addEventListener('resize', measure)
+        let ro = null
+        if (typeof ResizeObserver !== 'undefined') {
+          ro = new ResizeObserver(() => measure())
+          if (headRef.current) ro.observe(headRef.current)
+          if (composerRef.current) ro.observe(composerRef.current)
+        }
+        return () => {
+          for (const t of timers) window.clearTimeout(t)
+          window.removeEventListener('resize', measure)
+          if (ro) ro.disconnect()
+        }
+      }, [active])
 
       const addFriend = async () => {
         const target = newFriend.trim()
@@ -1380,7 +1409,7 @@ window.__ModuleLoader__.load({
         /* 顶栏 */
         h(
           'div',
-          { className: 'sc-chat-head' },
+          { className: 'sc-chat-head', ref: headRef },
           avatar(auth.displayName || auth.id, auth.id, 30, myAvatar),
           h(
             'div',
@@ -1660,7 +1689,7 @@ window.__ModuleLoader__.load({
             ),
             h(
               'div',
-              { className: 'sc-composer' },
+              { className: 'sc-composer', ref: composerRef },
               h(
                 'div',
                 { className: 'sc-composer-inner' },
