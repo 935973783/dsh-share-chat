@@ -6719,13 +6719,15 @@ window.__ModuleLoader__.load({
           l.setAttribute('x2', x2)
           l.setAttribute('y2', y2)
           l.setAttribute('stroke', '#7b93b5')
-          l.setAttribute('stroke-width', '1.7')
-          l.setAttribute('stroke-dasharray', '5 3')
+          l.setAttribute('stroke-width', '1.15')
+          l.setAttribute('stroke-dasharray', '4 3')
           l.setAttribute('stroke-linecap', 'round')
           svg.appendChild(l)
         }
-        // 虚线整体内缩 3.5px，避免和九宫格的实线压在一起
+        // 虚线整体内缩 3.5px；笼左上角那一格从数字右边/下边起笔，绕开数字
         const PAD = 3.5
+        const NUM_W = 17
+        const NUM_H = 14
         for (let i = 0; i < 81; i++) {
           const ci = owner[i]
           const x = COL(i) * CELL
@@ -6734,9 +6736,12 @@ window.__ModuleLoader__.load({
           const r = x + CELL - PAD
           const t = y + PAD
           const bo = y + CELL - PAD
-          if (ROW(i) === 0 || owner[i - 9] !== ci) seg(l, t, r, t)
+          const anchor = cageStart.has(i)
+          const topFrom = anchor ? Math.max(l, x + NUM_W) : l
+          const leftFrom = anchor ? Math.max(t, y + NUM_H) : t
+          if (ROW(i) === 0 || owner[i - 9] !== ci) seg(topFrom, t, r, t)
           if (ROW(i) === 8 || owner[i + 9] !== ci) seg(l, bo, r, bo)
-          if (COL(i) === 0 || owner[i - 1] !== ci) seg(l, t, l, bo)
+          if (COL(i) === 0 || owner[i - 1] !== ci) seg(l, leftFrom, l, bo)
           if (COL(i) === 8 || owner[i + 1] !== ci) seg(r, t, r, bo)
         }
 
