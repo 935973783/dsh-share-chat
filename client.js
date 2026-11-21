@@ -6057,7 +6057,8 @@ window.__ModuleLoader__.load({
 
       const paint = () => {
         const g = values()
-        const bad = conflicts()
+        // 填满之前不给对错提示，否则靠试凑就能试出来
+        const bad = new Set()
         const single = selSet.size === 1 ? [...selSet][0] : -1
         const selVal = single >= 0 ? g[single] : 0
         for (let i = 0; i < 81; i++) {
@@ -6423,25 +6424,98 @@ window.__ModuleLoader__.load({
         startClock()
       }
 
+      /**
+       * 输入一个数字：
+       *   空格打一个数 → 直接是大字（当确定值）
+       *   已经有数字再打别的 → 自动变成候选小字（1、4、5 那种排布）
+       *   候选只剩一个 → 自动变回大字
+       * 不再需要「铅笔模式」开关。
+       */
       const put = (v) => {
-        if (!selSet.size || done) return
+        if (!selSet.size) return
         touchStarted()
         for (const i of selSet) {
-          if (marks[i].v === v) marks[i].v = 0
+          const m = marks[i]
+          if (m.v) {
+            if (m.v === v) {
+              m.v = 0
+              m.p = []
+              m.u = []
+            } else {
+              m.p = [m.v, v].filter((x, k, a) => a.indexOf(x) === k).sort((a, b) => a - b)
+              m.v = 0
+              m.u = []
+            }
+            continue
+          }
+          const at = m.p.indexOf(v)
+          if (at >= 0) m.p.splice(at, 1)
           else {
-            marks[i].v = v
-            marks[i].p = []
-            marks[i].u = []
+            m.p.push(v)
+            m.p.sort((a, b) => a - b)
+          }
+          m.u = m.u.filter((x) => m.p.indexOf(x) >= 0)
+          if (m.p.length === 1) {
+            m.v = m.p[0]
+            m.p = []
+            m.u = []
           }
         }
         save()
         paint()
+        // 只有全部格子都是「单个数」且完全合法，才算解出
         const g = values()
         if (g.every((x) => x > 0) && conflicts().size === 0) {
           done = true
           stopClock()
+          const ms = currentMs()
+          showWin(ms)
           awardStars()
         }
+      }
+
+      /** 通关弹窗：用时 + 恭喜；结果留在棋盘上 */
+      const showWin = (ms) => {
+        const old = wrap.querySelector('[data-win]')
+        if (old) old.remove()
+        const box = document.createElement('div')
+        box.setAttribute('data-win', '1')
+        box.style.cssText = [
+          'position:absolute', 'inset:0', 'z-index:6',
+          'background:rgba(251,252,254,.92)',
+          'display:flex', 'flex-direction:column',
+          'align-items:center', 'justify-content:center', 'gap:10px',
+        ].join(';')
+        const t = document.createElement('div')
+        t.textContent = '解出来了'
+        t.style.cssText = 'font:600 22px system-ui;color:#1f2a37'
+        const tm = document.createElement('div')
+        tm.textContent = '用时 ' + fmt(ms)
+        tm.style.cssText = 'font:600 16px ui-monospace,monospace;color:#3f6fa8'
+        const b = document.createElement('button')
+        b.textContent = '回到题目'
+        b.style.cssText =
+          'margin-top:6px;padding:8px 18px;border-radius:10px;border:1px solid #dbe4f0;background:#fff;font:600 13px system-ui;cursor:pointer'
+        b.addEventListener('click', () => box.remove())
+        box.appendChild(t)
+        box.appendChild(tm)
+        box.appendChild(b)
+        wrap.appendChild(box)
+      }
+
+      /** 复原：清空成初始状态（星星不会重复给） */
+      const resetPuzzle = () => {
+        marks = blankMarks()
+        selSet = new Set()
+        done = false
+        baseMs = 0
+        runFrom = 0
+        window.clearInterval(timer)
+        $('[data-timer]').textContent = ''
+        const w = wrap.querySelector('[data-win]')
+        if (w) w.remove()
+        save()
+        build()
       }
 
       /** 通关：难度 1-10 → 1-5 星，同一盘每天只算一次 */
@@ -6566,7 +6640,7 @@ window.__ModuleLoader__.load({
           b.textContent = String(v)
           b.style.cssText =
             'padding:8px 0;border-radius:9px;border:1px solid #dbe4f0;background:#fff;font:600 15px system-ui;cursor:pointer'
-          b.addEventListener('click', () => (pencilMode ? togglePencil(v) : put(v)))
+          b.addEventListener('click', () => put(v))
           pad.appendChild(b)
         }
         const mk = (label, fn, color) => {
@@ -6580,16 +6654,7 @@ window.__ModuleLoader__.load({
           return b
         }
         pad.appendChild(mk('清除', clearSelected, '#ffd3e6'))
-        pad.appendChild(
-          (() => {
-            const b = mk('铅笔', () => {
-              pencilMode = !pencilMode
-              b.style.background = pencilMode ? '#e6f0ff' : '#fff'
-              b.style.borderColor = pencilMode ? '#7ea8e0' : '#dbe4f0'
-            })
-            return b
-          })(),
-        )
+        pad.appendChild(mk('复原', resetPuzzle))
         bodyEl.appendChild(pad)
         paint()
       }
@@ -6599,8 +6664,7 @@ window.__ModuleLoader__.load({
         if (e.target && /^(INPUT|TEXTAREA)$/.test(e.target.tagName)) return
         const k = e.key
         if (k >= '1' && k <= '9') {
-          if (e.shiftKey || pencilMode) togglePencil(Number(k))
-          else put(Number(k))
+          put(Number(k))
           e.preventDefault()
           return
         }
@@ -6611,12 +6675,6 @@ window.__ModuleLoader__.load({
         }
         if (k === 'c' || k === 'C') {
           clearSelected()
-          e.preventDefault()
-          return
-        }
-        if (k === 'p' || k === 'P') {
-          pencilMode = !pencilMode
-          onToast(pencilMode ? '铅笔模式：开' : '铅笔模式：关')
           e.preventDefault()
           return
         }
