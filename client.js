@@ -5065,16 +5065,21 @@ window.__ModuleLoader__.load({
           sx: e.clientX,
           sy: e.clientY,
           moved: false,
+          captured: false,
         }
-        try {
-          el.setPointerCapture(e.pointerId)
-        } catch (err) {}
       }
       const onMove = (e) => {
         const d = dragRef.current
         if (!d) return
         if (Math.abs(e.clientX - d.sx) + Math.abs(e.clientY - d.sy) > 4) d.moved = true
         if (!d.moved) return
+        // 真的开始拖了才捕获指针；一按下就捕获会把按钮的 click 吃掉
+        if (!d.captured) {
+          d.captured = true
+          try {
+            nodeRef.current.setPointerCapture(e.pointerId)
+          } catch (err) {}
+        }
         setPos((p) => ({
           ...p,
           x: Math.max(2, Math.min(window.innerWidth - 66, e.clientX - d.dx)),
@@ -5152,6 +5157,7 @@ window.__ModuleLoader__.load({
                 'button',
                 {
                   style: bstyle,
+                  onPointerDown: (e) => e.stopPropagation(),
                   onClick: (e) => {
                     e.stopPropagation()
                     const next = randomCharacter(face)
@@ -5165,10 +5171,14 @@ window.__ModuleLoader__.load({
                 'button',
                 {
                   style: bstyle,
+                  onPointerDown: (e) => e.stopPropagation(),
                   onClick: (e) => {
                     e.stopPropagation()
                     setMenu(false)
-                    setPos((p) => ({ ...p, hidden: true }))
+                    setPos((p) => Object.assign({}, p, { hidden: true }))
+                    try {
+                      writeJson(K_PET, Object.assign({}, pos, { hidden: true }))
+                    } catch (err) {}
                   },
                 },
                 '藏起来',
