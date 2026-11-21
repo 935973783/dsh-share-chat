@@ -305,7 +305,7 @@ window.__ModuleLoader__.load({
 .sc-foot{color:var(--dsw-alias-label-tertiary,#8b949e);font-size:11.5px;margin-top:14px;line-height:1.6}
 
 /* 聊天外壳 */
-.sc-chat{flex:1;min-height:0;display:flex;flex-direction:column}
+.sc-chat{flex:1;min-height:0;display:flex;flex-direction:column;position:relative}
 .sc-chat-head{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.20));flex:0 0 auto;position:sticky;top:0;z-index:6;background:var(--dsw-alias-bg-l1,Canvas);backdrop-filter:blur(8px)}
 .sc-chat-name{font-size:13.5px;font-weight:600;line-height:1.2}
 .sc-chat-sub{font-size:11.5px;color:var(--dsw-alias-label-tertiary,#8b949e);line-height:1.3}
@@ -324,7 +324,7 @@ window.__ModuleLoader__.load({
 .sc-friend-last{font-size:11px;color:var(--dsw-alias-label-tertiary,#8b949e);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 .sc-main{flex:1;min-width:0;display:flex;flex-direction:column}
-.sc-thread{flex:1;min-height:0;overflow:auto;padding:18px}
+.sc-thread{flex:1;min-height:0;overflow:auto;padding:18px 18px 86px}
 .sc-thread-inner{max-width:760px;margin:0 auto;display:flex;flex-direction:column;gap:10px}
 .sc-msg{display:flex;flex-direction:column;align-items:flex-start;gap:3px;max-width:100%}
 .sc-msg.mine{align-items:flex-end}
@@ -351,7 +351,7 @@ window.__ModuleLoader__.load({
 .sc-empty-hint{font-size:11.5px;opacity:.8}
 
 /* 输入区 */
-.sc-composer{flex:0 0 auto;border-top:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.20));padding:10px 14px 12px;position:sticky;bottom:0;z-index:6;background:var(--dsw-alias-bg-l1,Canvas)}
+.sc-composer{position:absolute;left:0;right:0;bottom:0;z-index:6;flex:0 0 auto;border-top:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.20));padding:10px 14px 12px;background:var(--dsw-alias-bg-l1,Canvas)}
 .sc-composer-inner{max-width:760px;margin:0 auto;display:flex;flex-direction:column;gap:8px}
 .sc-emoji{display:flex;flex-wrap:wrap;gap:2px;max-height:112px;overflow:auto;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.20));border-radius:12px;padding:6px;background:var(--dsw-alias-bg-elevated,transparent)}
 .sc-emoji button{border:0;background:transparent;font-size:17px;line-height:1;padding:4px 5px;border-radius:7px;cursor:pointer}
@@ -464,7 +464,7 @@ window.__ModuleLoader__.load({
   .sc-side-title{padding:10px 10px 4px}
   .sc-friend-last{display:none}
   .sc-chat-sub{display:none}
-  .sc-thread{padding:12px}
+  .sc-thread{padding:12px 12px 78px}
   .sc-thread-inner{gap:8px}
   .sc-composer{padding:8px 10px 10px}
   .sc-share{padding:6px 10px}
