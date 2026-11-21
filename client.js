@@ -6020,6 +6020,7 @@ window.__ModuleLoader__.load({
 
       let day = ''
       let curSource = ''
+      let curStale = false
       let puzzles = []
       let curIdx = 0
       let cages = []
@@ -6860,7 +6861,7 @@ window.__ModuleLoader__.load({
           }
         }
         $('[data-day]').textContent =
-          day + (pz.number ? ' · #' + pz.number : '') + (curSource === 'generated' ? ' · 自动出题' : '')
+          day + (pz.number ? ' · #' + pz.number : '') + (curSource === 'generated' ? ' · 自动出题' : '') + (curStale ? ' · 未更新' : '')
         renderSel()
         build()
       }
@@ -6893,6 +6894,7 @@ window.__ModuleLoader__.load({
         .then((r) => {
           day = r.day || ''
           curSource = r.source || ''
+          curStale = !!r.stale
           myStars = Number(r.myStars) || 0
           renderStars()
           loadShop()
