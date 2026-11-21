@@ -5323,6 +5323,7 @@ window.__ModuleLoader__.load({
         '<div style="display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:2px solid #ffd9ec">' +
         '<b style="font-size:14px">🀄 麻将</b>' +
         '<span data-room style="font-size:12px;color:#a184b3"></span>' +
+        '<span data-score style="font-size:12px;color:#b14a86;font-weight:700"></span>' +
         '<span style="flex:1"></span>' +
         '<button data-close style="' +
         B +
@@ -5437,7 +5438,9 @@ window.__ModuleLoader__.load({
         const top = document.createElement('div')
         top.style.cssText = 'display:flex;align-items:center;gap:8px;justify-content:center;margin-bottom:8px'
         const opp2 = room.players[2] || { name: '空位' }
-        top.appendChild(chip(opp2.name + ' · ' + (s.seats[2].handCount || 0) + ' 张'))
+        top.appendChild(
+          chip(opp2.name + ' · ' + (opp2.score || 0) + '分 · ' + (s.seats[2].handCount || 0) + ' 张'),
+        )
         if (s.turn === 2 && !s.ended) top.appendChild(chip('出牌中'))
         bodyEl.appendChild(top)
 
@@ -5449,6 +5452,7 @@ window.__ModuleLoader__.load({
           box.style.cssText = 'width:78px;flex:0 0 auto;display:flex;flex-direction:column;gap:4px'
           const p = room.players[i] || { name: '空位' }
           box.appendChild(chip(p.name))
+          box.appendChild(chip((p.score || 0) + ' 分'))
           box.appendChild(chip((s.seats[i].handCount || 0) + ' 张'))
           if (s.turn === i && !s.ended) box.appendChild(chip('出牌中'))
           return box
@@ -5496,6 +5500,26 @@ window.__ModuleLoader__.load({
           status.appendChild(chip('轮到你了'))
         }
         bodyEl.appendChild(status)
+
+        // 结算：谁赢谁输，各加减多少分
+        if (s.ended && room.deltas) {
+          const settleRow = document.createElement('div')
+          settleRow.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;margin:0 0 8px'
+          room.players.forEach((p, i) => {
+            const d = room.deltas[i] || 0
+            const c = document.createElement('span')
+            c.textContent = p.name + ' ' + (d > 0 ? '+' : '') + d
+            c.style.cssText =
+              'font-size:11.5px;padding:2px 8px;border-radius:99px;border:1px solid ' +
+              (d > 0 ? '#3ddc97' : d < 0 ? '#ff5fa2' : '#e4dbe8') +
+              ';background:' +
+              (d > 0 ? '#e9fbf2' : d < 0 ? '#ffeaf3' : '#faf7fb') +
+              ';color:' +
+              (d > 0 ? '#12855a' : d < 0 ? '#c0295f' : '#9a8ba6')
+            settleRow.appendChild(c)
+          })
+          bodyEl.appendChild(settleRow)
+        }
 
         // 我的手牌
         const handWrap = document.createElement('div')
@@ -5547,6 +5571,9 @@ window.__ModuleLoader__.load({
           room = r.room
           seat = r.seat
           state = r.state
+          if (room && seat >= 0 && room.players[seat]) {
+            $('[data-score]').textContent = '积分 ' + (room.players[seat].score || 0)
+          }
           if (!state) renderWaiting()
           else renderTable()
         } catch (e) {
