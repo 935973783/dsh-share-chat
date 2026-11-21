@@ -1659,6 +1659,24 @@ window.__ModuleLoader__.load({
           h(
             'button',
             {
+              className: 'sc-btn' + (sideTab === 'chats' ? ' sc-btn-primary' : ''),
+              onClick: () => setSideTab('chats'),
+              title: '会话列表',
+            },
+            '💬 会话',
+          ),
+          h(
+            'button',
+            {
+              className: 'sc-btn' + (sideTab === 'contacts' ? ' sc-btn-primary' : ''),
+              onClick: () => setSideTab('contacts'),
+              title: '通讯录',
+            },
+            '👥 通讯录',
+          ),
+          h(
+            'button',
+            {
               className: 'sc-btn' + (campMode ? ' sc-btn-primary' : ''),
               onClick: () => setCampMode((v) => !v),
               title: '串门：看看好友的营地',
@@ -1725,27 +1743,8 @@ window.__ModuleLoader__.load({
           { className: 'sc-chat-body' },
           h(
             'div',
-            { className: 'sc-side' },
-            h(
-              'div',
-              { className: 'sc-side-title', style: { display: 'flex', gap: '6px', alignItems: 'center' } },
-              h(
-                'button',
-                {
-                  className: 'sc-btn sc-btn-sm' + (sideTab === 'chats' ? ' sc-btn-primary' : ' sc-btn-ghost'),
-                  onClick: () => setSideTab('chats'),
-                },
-                '会话 ' + convs.filter((c) => !c.hidden).length,
-              ),
-              h(
-                'button',
-                {
-                  className: 'sc-btn sc-btn-sm' + (sideTab === 'contacts' ? ' sc-btn-primary' : ' sc-btn-ghost'),
-                  onClick: () => setSideTab('contacts'),
-                },
-                '通讯录 ' + convs.length,
-              ),
-            ),
+            { className: 'sc-side', style: sideTab === 'contacts' ? { display: 'none' } : undefined },
+            h('div', { className: 'sc-side-title' }, '会话'),
             h(
               'div',
               { className: 'sc-add' },
