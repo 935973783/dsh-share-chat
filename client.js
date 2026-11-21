@@ -1564,6 +1564,15 @@ window.__ModuleLoader__.load({
             },
             '🀄 麻将',
           ),
+          h(
+            'button',
+            {
+              className: 'sc-btn',
+              onClick: () => openKiller({ auth, onToast: (m) => setErr(m) }),
+              title: '每日杀手数独',
+            },
+            '🧩 数独',
+          ),
           h('button', { className: 'sc-btn sc-btn-ghost', onClick: props.onLogout }, '退出'),
         ),
         /* 主体 */
@@ -5665,6 +5674,294 @@ window.__ModuleLoader__.load({
       renderLobby()
       timer = window.setInterval(tick, 1300)
       return { close: () => wrap.remove() }
+    }
+
+    /* ---------- 每日杀手数独 ---------- */
+    function openKiller(opts) {
+      const auth = opts.auth
+      const onToast = opts.onToast || (() => {})
+
+      const wrap = document.createElement('div')
+      wrap.style.cssText = [
+        'position:fixed',
+        'right:18px',
+        'bottom:18px',
+        'width:470px',
+        'max-width:calc(100vw - 16px)',
+        'z-index:2147483646',
+        'display:flex',
+        'flex-direction:column',
+        'border-radius:16px',
+        'background:#fbfcfe',
+        'border:2px solid #dbe4f0',
+        'box-shadow:0 24px 60px rgba(30,50,90,.28)',
+        'font:13px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif',
+        'color:#1f2a37',
+        'overflow:hidden',
+      ].join(';')
+      wrap.innerHTML =
+        '<div style="display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid #e3eaf4">' +
+        '<b style="font-size:14px">🧩 杀手数独</b>' +
+        '<span data-day style="font-size:12px;color:#7b8ca6"></span>' +
+        '<span data-timer style="font-size:12px;color:#7b8ca6;margin-left:auto"></span>' +
+        '<button data-close style="padding:5px 9px;border-radius:8px;border:1px solid #dbe4f0;background:#fff;cursor:pointer">✕</button>' +
+        '</div>' +
+        '<div data-body style="padding:12px"></div>'
+      document.body.appendChild(wrap)
+
+      const $ = (s) => wrap.querySelector(s)
+      const bodyEl = $('[data-body]')
+
+      let day = ''
+      let cages = []
+      let owner = null
+      let grid = new Array(81).fill(0)
+      let sel = -1
+      let cageStart = new Set()
+      let cageSum = new Map()
+      let cells = []
+      let startedAt = 0
+      let timer = null
+      let done = false
+
+      const fmt = (ms) => {
+        const s = Math.floor(ms / 1000)
+        return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0')
+      }
+
+      const keyOfDay = () => 'dsh-share-chat.killer.' + day
+
+      const save = () => {
+        try {
+          writeJson(keyOfDay(), { grid, startedAt })
+        } catch (e) {}
+      }
+
+      const ROW = (i) => (i / 9) | 0
+      const COL = (i) => i % 9
+      const BOX = (i) => ((ROW(i) / 3) | 0) * 3 + ((COL(i) / 3) | 0)
+
+      const conflicts = () => {
+        const bad = new Set()
+        for (let i = 0; i < 81; i++) {
+          const v = grid[i]
+          if (!v) continue
+          for (let j = 0; j < 81; j++) {
+            if (j === i || grid[j] !== v) continue
+            if (ROW(j) === ROW(i) || COL(j) === COL(i) || BOX(j) === BOX(i)) bad.add(i).add(j)
+          }
+        }
+        for (const cage of cages) {
+          const seen = new Map()
+          for (const i of cage.cells) {
+            const v = grid[i]
+            if (!v) continue
+            if (seen.has(v)) {
+              bad.add(i)
+              bad.add(seen.get(v))
+            } else seen.set(v, i)
+          }
+          if (cage.cells.every((i) => grid[i] > 0)) {
+            const s = cage.cells.reduce((a, i) => a + grid[i], 0)
+            if (s !== cage.sum) for (const i of cage.cells) bad.add(i)
+          }
+        }
+        return bad
+      }
+
+      const paint = () => {
+        const bad = conflicts()
+        const selVal = sel >= 0 ? grid[sel] : 0
+        for (let i = 0; i < 81; i++) {
+          const cell = cells[i]
+          const v = grid[i]
+          cell.textContent = ''
+          if (v) {
+            const span = document.createElement('span')
+            span.textContent = String(v)
+            span.style.cssText = 'font:600 20px system-ui;color:' + (bad.has(i) ? '#d9534f' : '#1f2a37')
+            cell.appendChild(span)
+          }
+          if (cageStart.has(i)) {
+            const lab = document.createElement('span')
+            lab.textContent = String(cageSum.get(i))
+            lab.style.cssText =
+              'position:absolute;top:1px;left:3px;font:600 9.5px/1 ui-monospace,monospace;color:#6b7f9e'
+            cell.appendChild(lab)
+          }
+          let bg = '#fff'
+          if (bad.has(i)) bg = '#fde8e8'
+          else if (sel === i) bg = '#e6f0ff'
+          else if (v && selVal && v === selVal) bg = '#eef4ff'
+          cell.style.background = bg
+        }
+      }
+
+      const select = (i) => {
+        sel = i
+        paint()
+      }
+
+      const put = (v) => {
+        if (sel < 0 || done) return
+        if (!startedAt) {
+          startedAt = Date.now()
+          timer = window.setInterval(() => {
+            $('[data-timer]').textContent = fmt(Date.now() - startedAt)
+          }, 1000)
+        }
+        grid[sel] = grid[sel] === v ? 0 : v
+        save()
+        paint()
+        if (grid.every((x) => x > 0) && conflicts().size === 0) {
+          done = true
+          window.clearInterval(timer)
+          onToast('解出来了 🎉')
+        }
+      }
+
+      const build = () => {
+        bodyEl.textContent = ''
+        owner = new Int8Array(81).fill(-1)
+        cages.forEach((c, ci) => c.cells.forEach((i) => (owner[i] = ci)))
+
+        const board = document.createElement('div')
+        board.style.cssText =
+          'display:grid;grid-template-columns:repeat(9,44px);grid-template-rows:repeat(9,44px);border:2.5px solid #1f2a37;margin:0 auto;width:max-content'
+
+        cells = []
+        for (let i = 0; i < 81; i++) {
+          const ci = owner[i]
+          const top = i < 9 || owner[i - 9] !== ci || ROW(i) % 3 === 0
+          const left = i % 9 === 0 || owner[i - 1] !== ci || COL(i) % 3 === 0
+          const bottom = i >= 72 || owner[i + 9] !== ci || ROW(i) % 3 === 2
+          const right = i % 9 === 8 || owner[i + 1] !== ci || COL(i) % 3 === 2
+          const cell = document.createElement('div')
+          cell.style.cssText = [
+            'position:relative',
+            'display:flex',
+            'align-items:center',
+            'justify-content:center',
+            'cursor:pointer',
+            'user-select:none',
+            'border-top:' + (top ? '2px solid #1f2a37' : '1px solid #dde5ef'),
+            'border-left:' + (left ? '2px solid #1f2a37' : '1px solid #dde5ef'),
+            'border-bottom:' + (bottom ? '2px solid #1f2a37' : '1px solid #dde5ef'),
+            'border-right:' + (right ? '2px solid #1f2a37' : '1px solid #dde5ef'),
+          ].join(';')
+          cell.addEventListener('click', () => select(i))
+          board.appendChild(cell)
+          cells.push(cell)
+        }
+        bodyEl.appendChild(board)
+
+        const pad = document.createElement('div')
+        pad.style.cssText =
+          'display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-top:12px'
+        for (let v = 1; v <= 9; v++) {
+          const b = document.createElement('button')
+          b.textContent = String(v)
+          b.style.cssText =
+            'padding:9px 0;border-radius:9px;border:1px solid #dbe4f0;background:#fff;font:600 15px system-ui;cursor:pointer'
+          b.addEventListener('click', () => put(v))
+          pad.appendChild(b)
+        }
+        const erase = document.createElement('button')
+        erase.textContent = '清除'
+        erase.style.cssText =
+          'padding:9px 0;border-radius:9px;border:1px solid #ffd3e6;background:#fff5fa;color:#c0295f;font:600 13px system-ui;cursor:pointer'
+        erase.addEventListener('click', () => {
+          if (sel >= 0 && !done) {
+            grid[sel] = 0
+            save()
+            paint()
+          }
+        })
+        pad.appendChild(erase)
+        const reset = document.createElement('button')
+        reset.textContent = '重来'
+        reset.style.cssText =
+          'padding:9px 0;border-radius:9px;border:1px solid #dbe4f0;background:#fff;font:600 13px system-ui;cursor:pointer'
+        reset.addEventListener('click', () => {
+          grid = new Array(81).fill(0)
+          done = false
+          sel = -1
+          save()
+          paint()
+        })
+        pad.appendChild(reset)
+        bodyEl.appendChild(pad)
+
+        const tip = document.createElement('div')
+        tip.textContent = '点格子后按 1–9 填，再按一次取消；方向键移动'
+        tip.style.cssText = 'font-size:11px;color:#93a3ba;margin-top:8px;text-align:center'
+        bodyEl.appendChild(tip)
+
+        paint()
+      }
+
+      const onKey = (e) => {
+        if (!document.body.contains(wrap)) return
+        if (e.key >= '1' && e.key <= '9') {
+          put(Number(e.key))
+          e.preventDefault()
+          return
+        }
+        if (e.key === 'Backspace' || e.key === 'Delete' || e.key === '0') {
+          if (sel >= 0 && !done) {
+            grid[sel] = 0
+            save()
+            paint()
+          }
+          e.preventDefault()
+          return
+        }
+        const move = { ArrowUp: -9, ArrowDown: 9, ArrowLeft: -1, ArrowRight: 1 }[e.key]
+        if (move !== undefined) {
+          e.preventDefault()
+          if (sel < 0) return select(0)
+          const r = ROW(sel)
+          const c = COL(sel)
+          if (e.key === 'ArrowLeft' && c === 0) return
+          if (e.key === 'ArrowRight' && c === 8) return
+          if (e.key === 'ArrowUp' && r === 0) return
+          if (e.key === 'ArrowDown' && r === 8) return
+          select(sel + move)
+        }
+      }
+
+      window.addEventListener('keydown', onKey, true)
+      $('[data-close]').addEventListener('click', () => {
+        window.removeEventListener('keydown', onKey, true)
+        window.clearInterval(timer)
+        wrap.remove()
+      })
+
+      api(auth.server, '/api/killer/today', { token: auth.token })
+        .then((r) => {
+          day = r.day || ''
+          cages = r.cages || []
+          $('[data-day]').textContent = day
+          cages.forEach((c) => {
+            const start = Math.min(...c.cells)
+            cageStart.add(start)
+            cageSum.set(start, c.sum)
+          })
+          const saved = readJson(keyOfDay())
+          if (saved && Array.isArray(saved.grid) && saved.grid.length === 81) {
+            grid = saved.grid.slice()
+            startedAt = Number(saved.startedAt) || 0
+            if (startedAt && grid.some((x) => x > 0)) {
+              timer = window.setInterval(() => {
+                $('[data-timer]').textContent = fmt(Date.now() - startedAt)
+              }, 1000)
+            }
+          }
+          build()
+        })
+        .catch((e) => {
+          bodyEl.textContent = '题目加载失败：' + friendly(e)
+        })
     }
 
     function SocialView(props) {
