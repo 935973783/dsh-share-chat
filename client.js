@@ -867,6 +867,8 @@ window.__ModuleLoader__.load({
       const [campMode, setCampMode] = useState(false)
       avatarBase = auth.server
       const [groups, setGroups] = useState([])
+      const [hiddenChats, setHiddenChats] = useState([])
+      const [sideTab, setSideTab] = useState('chats')
       const [myAvatar, setMyAvatar] = useState('')
       // Electron 里 window.prompt 不可用，所有需要输入的地方都走这个内联框
       const [inline, setInline] = useState(null)
@@ -896,6 +898,7 @@ window.__ModuleLoader__.load({
           const r = await api(auth.server, '/api/friends', { token: auth.token })
           setFriends(r.friends || [])
           setGroups(r.groups || [])
+          setHiddenChats(Array.isArray(r.hidden) ? r.hidden : [])
           // 上次那个会话没了（退群/删好友）就退回第一个
           const keys = (r.friends || []).map((f) => f.id)
           for (const g of r.groups || []) keys.push('g:' + g.id)
@@ -1047,6 +1050,21 @@ window.__ModuleLoader__.load({
           if (ro) ro.disconnect()
         }
       }, [active])
+
+      /** 不显示 / 恢复某个会话（只影响列表，好友关系不动） */
+      const hideChat = async (key, hidden) => {
+        try {
+          const r = await api(auth.server, '/api/hidden', {
+            method: 'POST',
+            token: auth.token,
+            body: { key, hidden },
+          })
+          setHiddenChats(Array.isArray(r.hidden) ? r.hidden : [])
+          if (hidden && active === key) setActive(null)
+        } catch (e) {
+          setErr(friendly(e))
+        }
+      }
 
       const addFriend = async () => {
         const target = newFriend.trim()
@@ -1362,6 +1380,7 @@ window.__ModuleLoader__.load({
           title: f.displayName || f.id,
           avatar: f.avatar || '',
           members: [],
+          hidden: hiddenChats.indexOf(f.id) >= 0,
         })),
         ...groups.map((g) => ({
           kind: 'group',
@@ -1369,8 +1388,10 @@ window.__ModuleLoader__.load({
           title: g.name,
           avatar: g.avatar || '',
           members: g.members || [],
+          hidden: hiddenChats.indexOf('g:' + g.id) >= 0,
         })),
       ]
+      const shownConvs = sideTab === 'contacts' ? convs : convs.filter((c) => !c.hidden)
       const current = convs.find((c) => c.key === active) || null
       const isGroup = !!(current && current.kind === 'group')
       const nameOf = (id) => {
@@ -1584,7 +1605,26 @@ window.__ModuleLoader__.load({
           h(
             'div',
             { className: 'sc-side' },
-            h('div', { className: 'sc-side-title' }, '会话'),
+            h(
+              'div',
+              { className: 'sc-side-title', style: { display: 'flex', gap: '6px', alignItems: 'center' } },
+              h(
+                'button',
+                {
+                  className: 'sc-btn sc-btn-sm' + (sideTab === 'chats' ? ' sc-btn-primary' : ' sc-btn-ghost'),
+                  onClick: () => setSideTab('chats'),
+                },
+                '会话 ' + convs.filter((c) => !c.hidden).length,
+              ),
+              h(
+                'button',
+                {
+                  className: 'sc-btn sc-btn-sm' + (sideTab === 'contacts' ? ' sc-btn-primary' : ' sc-btn-ghost'),
+                  onClick: () => setSideTab('contacts'),
+                },
+                '通讯录 ' + convs.length,
+              ),
+            ),
             h(
               'div',
               { className: 'sc-add' },
@@ -1641,15 +1681,22 @@ window.__ModuleLoader__.load({
             h(
               'div',
               { className: 'sc-friends' },
-              convs.length === 0
-                ? emptyState('👥', '还没有会话', '在上面加好友，或者点「建群」')
-                : convs.map((c) =>
+              shownConvs.length === 0
+                ? emptyState(
+                    '👥',
+                    sideTab === 'contacts' ? '通讯录是空的' : '没有显示的会话',
+                    sideTab === 'contacts' ? '在上面加好友，或者点「建群」' : '被隐起来的会话在「通讯录」里',
+                  )
+                : shownConvs.map((c) =>
                     h(
                       'div',
                       {
                         key: c.key,
                         className: 'sc-friend' + (active === c.key ? ' on' : ''),
-                        onClick: () => setActive(c.key),
+                        onClick: () => {
+                          setActive(c.key)
+                          if (c.hidden) hideChat(c.key, false)
+                        },
                         title: c.key,
                         // 会话卡片直接用这个会话的聊天背景铺满
                         style: cardStyle(bgOf(c.key), active === c.key),
@@ -1666,6 +1713,19 @@ window.__ModuleLoader__.load({
                           c.title + (c.kind === 'group' ? '  (' + c.members.length + ')' : ''),
                         ),
                         h('div', { className: 'sc-friend-last' }, previewOf(lastOf(c.key)) || '还没有消息'),
+                      ),
+                      h(
+                        'button',
+                        {
+                          className: 'sc-btn sc-btn-sm sc-btn-ghost',
+                          title: c.hidden ? '恢复显示这个会话' : '不显示该聊天（好友还在通讯录）',
+                          onClick: (e) => {
+                            e.stopPropagation()
+                            hideChat(c.key, !c.hidden)
+                          },
+                          style: { padding: '0 6px', minWidth: '24px', fontSize: '11px', flex: '0 0 auto' },
+                        },
+                        c.hidden ? '显示' : '✕',
                       ),
                     ),
                   ),
