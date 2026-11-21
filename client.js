@@ -5158,6 +5158,8 @@ window.__ModuleLoader__.load({
       const [auth, setAuth] = useState(() => readJson(K_AUTH))
       const [gameOpen, setGameOpen] = useState(false)
       const rootRef = useRef(null)
+      // 只有会话里的 View 才拿得到会话数据；全局面板没有 props
+      const canShare = !!(props && props.sessionId && typeof props.useChat === 'function')
 
       useEffect(() => {
         const el = rootRef.current
@@ -5201,6 +5203,11 @@ window.__ModuleLoader__.load({
             h = Math.round(window.innerHeight - Math.max(0, Math.round(rect.top)) - 6)
           }
           h = Math.max(280, h)
+          // 嵌在对话流里的版本会跟着整页滚：如果块比视口还高，
+          // 底部的输入框就被推到屏幕外，怎么钉都没用。这里直接压到视口内。
+          if (canShare) {
+            h = Math.min(h, Math.round(window.innerHeight * 0.86))
+          }
           el.style.height = h + 'px'
           el.style.maxHeight = h + 'px'
           el.style.overflow = 'hidden'
@@ -5231,7 +5238,7 @@ window.__ModuleLoader__.load({
           window.removeEventListener('resize', fit)
           if (ro) ro.disconnect()
         }
-      }, [auth])
+      }, [auth, canShare])
 
       const body = !auth
         ? h(LoginPanel, { onDone: (next) => setAuth(next) })
@@ -5244,9 +5251,6 @@ window.__ModuleLoader__.load({
               setGameOpen(false)
             },
           })
-
-      // 只有会话里的 View 才拿得到会话数据；全局面板没有 props
-      const canShare = !!(props && props.sessionId && typeof props.useChat === 'function')
 
       return h(
         'div',
