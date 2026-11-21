@@ -328,6 +328,10 @@ window.__ModuleLoader__.load({
 .sc-thread-inner{max-width:760px;margin:0 auto;display:flex;flex-direction:column;gap:10px}
 .sc-msg{display:flex;flex-direction:column;align-items:flex-start;gap:3px;max-width:100%}
 .sc-msg.mine{align-items:flex-end}
+.sc-msg-row{display:flex;gap:8px;align-items:flex-start;max-width:100%}
+.sc-msg-row.mine{flex-direction:row-reverse}
+.sc-msg-row>.sc-avatar{margin-top:2px}
+.sc-msg-row .sc-msg{max-width:78%}
 .sc-bubble{max-width:min(78%,560px);padding:8px 12px;border-radius:14px 14px 14px 4px;background:var(--dsw-alias-fill-l2,rgba(128,128,128,.12));white-space:pre-wrap;word-break:break-word}
 .sc-msg.mine .sc-bubble{background:var(--dsw-alias-brand-primary,#247bbf);color:var(--dsw-alias-label-on-color,#fff);border-radius:14px 14px 4px 14px}
 .sc-time{font-size:10.5px;color:var(--dsw-alias-label-quaternary,#a0a8b0);padding:0 4px}
@@ -1260,6 +1264,12 @@ window.__ModuleLoader__.load({
         const dm = convs.find((c) => c.kind === 'dm' && c.key === id)
         return dm ? dm.title : id
       }
+      const avatarOfSender = (id) => {
+        const mem = current && (current.members || []).find((x) => x.id === id)
+        if (mem) return mem.avatar || ''
+        const dm = convs.find((c) => c.kind === 'dm' && c.key === id)
+        return dm ? dm.avatar || '' : ''
+      }
 
       const thread = messages.filter((m) => m.from === active || m.to === active)
 
@@ -1345,12 +1355,22 @@ window.__ModuleLoader__.load({
         }
         return h(
           'div',
-          { key: m.seq, className: 'sc-msg' + (mine ? ' mine' : '') },
-          isGroup && !mine
-            ? h('div', { className: 'sc-time', style: { marginBottom: '2px' } }, nameOf(m.from))
-            : null,
-          content,
-          h('div', { className: 'sc-time' }, clockText(m.at)),
+          { key: m.seq, className: 'sc-msg-row' + (mine ? ' mine' : '') },
+          avatar(
+            mine ? auth.displayName || auth.id : nameOf(m.from),
+            mine ? auth.id : m.from,
+            32,
+            mine ? myAvatar : avatarOfSender(m.from),
+          ),
+          h(
+            'div',
+            { className: 'sc-msg' + (mine ? ' mine' : '') },
+            isGroup && !mine
+              ? h('div', { className: 'sc-time', style: { marginBottom: '2px' } }, nameOf(m.from))
+              : null,
+            content,
+            h('div', { className: 'sc-time' }, clockText(m.at)),
+          ),
         )
       }
 
@@ -1361,7 +1381,7 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { className: 'sc-chat-head' },
-          h(Character, { id: auth.id, ch: readMyCharacter(), size: 30 }),
+          avatar(auth.displayName || auth.id, auth.id, 30, myAvatar),
           h(
             'div',
             { style: { minWidth: 0 } },
@@ -1406,6 +1426,19 @@ window.__ModuleLoader__.load({
               title: '一起唱歌：同步伴奏 + 语音',
             },
             '🎤 KTV',
+          ),
+          h(
+            'button',
+            {
+              className: 'sc-btn',
+              onClick: () => {
+                try {
+                  window.dispatchEvent(new CustomEvent('dsh-share-chat:pet-show'))
+                } catch (e) {}
+              },
+              title: '叫出桌宠（形象独立浮在界面上）',
+            },
+            '🐳',
           ),
           h('button', { className: 'sc-btn sc-btn-ghost', onClick: props.onLogout }, '退出'),
         ),
@@ -1490,7 +1523,7 @@ window.__ModuleLoader__.load({
                       },
                       c.kind === 'group'
                         ? avatar(c.title, c.key, 30, c.avatar, true)
-                        : h(Character, { id: c.key, size: 30 }),
+                        : avatar(c.title, c.key, 30, c.avatar),
                       h(
                         'div',
                         { className: 'sc-friend-main' },
@@ -4890,6 +4923,208 @@ window.__ModuleLoader__.load({
       return { close: () => wrap.remove() }
     }
 
+    /* ---------- 桌宠：形象独立挂在 UI 上 ---------- */
+    const K_PET = 'dsh-share-chat.pet'
+    const PET_ID = 'dsh-share-chat-pet'
+
+    function PetWidget() {
+      const [face, setFace] = useState(() => readMyCharacter())
+      const [pos, setPos] = useState(() => {
+        const p = readJson(K_PET)
+        return p && typeof p.x === 'number' ? p : { x: null, y: null, hidden: false }
+      })
+      const [menu, setMenu] = useState(false)
+      const dragRef = useRef(null)
+      const nodeRef = useRef(null)
+
+      // 设置页换了形象，这里跟上
+      useEffect(() => {
+        const t = window.setInterval(() => {
+          const next = readMyCharacter()
+          setFace((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next))
+        }, 1500)
+        return () => window.clearInterval(t)
+      }, [])
+
+      useEffect(() => {
+        writeJson(K_PET, pos)
+      }, [pos])
+
+      // 从聊天里点 🐳 把它叫回来
+      useEffect(() => {
+        const show = () => setPos((p) => Object.assign({}, p, { hidden: false }))
+        window.addEventListener('dsh-share-chat:pet-show', show)
+        return () => window.removeEventListener('dsh-share-chat:pet-show', show)
+      }, [])
+
+      if (pos.hidden) return null
+
+      const startDrag = (e) => {
+        const el = nodeRef.current
+        if (!el) return
+        const r = el.getBoundingClientRect()
+        dragRef.current = {
+          dx: e.clientX - r.left,
+          dy: e.clientY - r.top,
+          sx: e.clientX,
+          sy: e.clientY,
+          moved: false,
+        }
+        try {
+          el.setPointerCapture(e.pointerId)
+        } catch (err) {}
+      }
+      const onMove = (e) => {
+        const d = dragRef.current
+        if (!d) return
+        if (Math.abs(e.clientX - d.sx) + Math.abs(e.clientY - d.sy) > 4) d.moved = true
+        if (!d.moved) return
+        setPos((p) => ({
+          ...p,
+          x: Math.max(2, Math.min(window.innerWidth - 66, e.clientX - d.dx)),
+          y: Math.max(2, Math.min(window.innerHeight - 82, e.clientY - d.dy)),
+        }))
+      }
+      const onUp = () => {
+        const d = dragRef.current
+        dragRef.current = null
+        if (d && !d.moved) setMenu((v) => !v)
+      }
+
+      const style = {
+        position: 'fixed',
+        zIndex: 2147483000,
+        width: '60px',
+        height: '74px',
+        display: 'flex',
+        alignItems: 'flex-end',
+        justifyContent: 'center',
+        cursor: 'grab',
+        userSelect: 'none',
+        touchAction: 'none',
+        filter: 'drop-shadow(0 6px 10px rgba(0,0,0,.28))',
+      }
+      if (pos.x === null) {
+        style.right = '22px'
+        style.bottom = '92px'
+      } else {
+        style.left = pos.x + 'px'
+        style.top = pos.y + 'px'
+      }
+
+      const bubble = {
+        position: 'absolute',
+        bottom: '100%',
+        right: 0,
+        marginBottom: '6px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '4px',
+        padding: '6px',
+        borderRadius: '10px',
+        background: 'rgba(28,30,34,.92)',
+        border: '1px solid rgba(255,255,255,.16)',
+        boxShadow: '0 10px 24px rgba(0,0,0,.35)',
+      }
+      const bstyle = {
+        padding: '5px 10px',
+        borderRadius: '7px',
+        border: '1px solid rgba(255,255,255,.18)',
+        background: 'rgba(255,255,255,.08)',
+        color: '#e8eaed',
+        fontSize: '12px',
+        cursor: 'pointer',
+        whiteSpace: 'nowrap',
+      }
+
+      return h(
+        'div',
+        {
+          ref: nodeRef,
+          style,
+          title: '点一下有菜单，按住可以拖走',
+          onPointerDown: startDrag,
+          onPointerMove: onMove,
+          onPointerUp: onUp,
+          onPointerCancel: onUp,
+        },
+        menu
+          ? h(
+              'div',
+              { style: bubble },
+              h(
+                'button',
+                {
+                  style: bstyle,
+                  onClick: (e) => {
+                    e.stopPropagation()
+                    const next = randomCharacter(face)
+                    setFace(next)
+                    writeJson(K_CHARACTER, next)
+                  },
+                },
+                '换形象',
+              ),
+              h(
+                'button',
+                {
+                  style: bstyle,
+                  onClick: (e) => {
+                    e.stopPropagation()
+                    setMenu(false)
+                    setPos((p) => ({ ...p, hidden: true }))
+                  },
+                },
+                '藏起来',
+              ),
+            )
+          : null,
+        h('div', { className: 'sc-pet-bob' }, h(Character, { face, size: 56 })),
+      )
+    }
+
+    /** 挂到 document.body 上，不跟着任何面板卸载；拿不到 react-dom 就退化 */
+    function mountPet() {
+      if (typeof document === 'undefined') return () => {}
+      if (document.getElementById(PET_ID)) return () => {}
+      const host = document.createElement('div')
+      host.id = PET_ID
+      document.body.appendChild(host)
+
+      const css = document.createElement('style')
+      css.id = PET_ID + '-css'
+      css.textContent =
+        '@keyframes sc-pet-bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}' +
+        '.sc-pet-bob{animation:sc-pet-bob 2.6s ease-in-out infinite}'
+      document.head.appendChild(css)
+
+      let root = null
+      try {
+        const rd = require('react-dom/client')
+        if (rd && rd.createRoot) {
+          root = rd.createRoot(host)
+          root.render(h(PetWidget))
+        }
+      } catch (e) {
+        root = null
+      }
+
+      if (!root) {
+        host.textContent = '🐳'
+        host.title = '拿不到 react-dom，先放个占位'
+        host.style.cssText =
+          'position:fixed;right:22px;bottom:92px;z-index:2147483000;font-size:44px;cursor:default;user-select:none;filter:drop-shadow(0 6px 10px rgba(0,0,0,.28))'
+      }
+
+      return () => {
+        try {
+          if (root) root.unmount()
+        } catch (e) {}
+        host.remove()
+        css.remove()
+      }
+    }
+
     function SocialView(props) {
       const [auth, setAuth] = useState(() => readJson(K_AUTH))
       const [gameOpen, setGameOpen] = useState(false)
@@ -5525,6 +5760,9 @@ window.__ModuleLoader__.load({
     return {
       inject: ['slots'],
       apply(ctx) {
+        // 桌宠：挂在 body 上，和面板解耦
+        ctx.effect(() => mountPet())
+
         // 样式表：跟着插件生命周期建立/移除
         ctx.effect(() => {
           ensureStyles()
