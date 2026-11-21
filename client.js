@@ -5725,14 +5725,18 @@ window.__ModuleLoader__.load({
         '<div data-sel></div>' +
         '<div data-body></div>' +
         '</div>' +
-        '<div data-panel style="flex:1;min-width:0;border-left:1px solid #e3eaf4;overflow:auto;padding:12px"></div>' +
+        '<div data-panel style="flex:1;min-width:0;border-left:1px solid #e3eaf4;overflow:auto;padding:12px">' +
+        '<div data-dyn></div>' +
+        '<div data-calc style="border-top:1px solid #e8eef7;margin-top:10px;padding-top:10px"></div>' +
+        '</div>' +
         '</div>'
       document.body.appendChild(wrap)
 
       const $ = (s) => wrap.querySelector(s)
       const bodyEl = $('[data-body]')
       const selEl = $('[data-sel]')
-      const panelEl = $('[data-panel]')
+      const dynEl = $('[data-dyn]')
+      const calcEl = $('[data-calc]')
 
       const ROW = (i) => (i / 9) | 0
       const COL = (i) => i % 9
@@ -5867,7 +5871,7 @@ window.__ModuleLoader__.load({
       let cageSum = new Map()
 
       const renderPanel = () => {
-        panelEl.textContent = ''
+        dynEl.textContent = ''
         const g = values()
         const box = document.createElement('div')
         box.style.cssText = 'display:flex;flex-direction:column;gap:8px'
@@ -5976,10 +5980,20 @@ window.__ModuleLoader__.load({
           box.appendChild(bodyC)
         }
 
-        // 计算器
+        dynEl.appendChild(box)
+      }
+
+      const inpStyle = () =>
+        'width:56px;padding:4px 6px;border-radius:7px;border:1px solid #dbe4f0;background:#fff;font:12px system-ui'
+
+      /**
+       * 计算器只建一次，放在独立的 data-calc 容器里。
+       * 以前它长在 renderPanel 里，每次点格子就重建一次，输入和结果全被清掉。
+       */
+      const buildCalc = () => {
+        calcEl.textContent = ''
         const calc = document.createElement('div')
-        calc.style.cssText =
-          'display:flex;align-items:center;gap:6px;border-top:1px solid #e8eef7;padding-top:8px;margin-top:2px'
+        calc.style.cssText = 'display:flex;align-items:center;gap:6px'
         const lab = document.createElement('span')
         lab.textContent = '计算器'
         lab.style.cssText = 'font-size:12px;color:#7b8ca6'
@@ -5994,7 +6008,7 @@ window.__ModuleLoader__.load({
         btn.style.cssText =
           'padding:4px 10px;border-radius:7px;border:1px solid #dbe4f0;background:#fff;font:600 12px system-ui;cursor:pointer'
         const outC = document.createElement('div')
-        outC.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px'
+        outC.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;min-height:20px;margin-top:8px'
         btn.addEventListener('click', () => {
           outC.textContent = ''
           const s = Number(inSum.value)
@@ -6003,10 +6017,10 @@ window.__ModuleLoader__.load({
           const list = combos(s, n)
           if (!list.length) {
             outC.textContent = '没有组合'
-            outC.style.cssText = 'font-size:12px;color:#d9534f'
+            outC.style.cssText = 'font-size:12px;color:#d9534f;min-height:20px;margin-top:8px'
             return
           }
-          outC.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px'
+          outC.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;min-height:20px;margin-top:8px'
           for (const c of list.slice(0, 60)) {
             const t = document.createElement('span')
             t.textContent = c.join('')
@@ -6019,21 +6033,19 @@ window.__ModuleLoader__.load({
         calc.appendChild(inSum)
         calc.appendChild(inN)
         calc.appendChild(btn)
-        box.appendChild(calc)
-        box.appendChild(outC)
 
-        // 操作说明
         const tip = document.createElement('div')
-        tip.style.cssText = 'font-size:11px;color:#93a3ba;line-height:1.6'
+        tip.style.cssText = 'font-size:11px;color:#93a3ba;line-height:1.6;margin-top:10px'
         tip.innerHTML =
           '<b>按住左键拖过去</b>刷选多格（Shift 拖 = 取消选）· 1–9 填数（再按取消）· <b>Shift+1–9</b> 加候选 · <b>U</b> 划线 · <b>C</b> 清空选中 · <b>P</b> 铅笔模式 · 方向键移动'
-        box.appendChild(tip)
 
-        panelEl.appendChild(box)
+        calcEl.appendChild(calc)
+        calcEl.appendChild(outC)
+        calcEl.appendChild(tip)
       }
 
-      const inpStyle = () =>
-        'width:56px;padding:4px 6px;border-radius:7px;border:1px solid #dbe4f0;background:#fff;font:12px system-ui'
+      buildCalc()
+
 
       const select = (i, additive) => {
         if (!additive) selSet = new Set([i])
