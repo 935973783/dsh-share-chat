@@ -6724,15 +6724,22 @@ window.__ModuleLoader__.load({
           l.setAttribute('stroke-linecap', 'round')
           svg.appendChild(l)
         }
+        // 虚线整体内缩 3.5px，避免和九宫格的实线压在一起
+        const PAD = 3.5
         for (let i = 0; i < 81; i++) {
           const ci = owner[i]
           const x = COL(i) * CELL
           const y = ROW(i) * CELL
-          if (ROW(i) === 0 || owner[i - 9] !== ci) seg(x, y, x + CELL, y)
-          if (ROW(i) === 8 || owner[i + 9] !== ci) seg(x, y + CELL, x + CELL, y + CELL)
-          if (COL(i) === 0 || owner[i - 1] !== ci) seg(x, y, x, y + CELL)
-          if (COL(i) === 8 || owner[i + 1] !== ci) seg(x + CELL, y, x + CELL, y + CELL)
+          const l = x + PAD
+          const r = x + CELL - PAD
+          const t = y + PAD
+          const bo = y + CELL - PAD
+          if (ROW(i) === 0 || owner[i - 9] !== ci) seg(l, t, r, t)
+          if (ROW(i) === 8 || owner[i + 9] !== ci) seg(l, bo, r, bo)
+          if (COL(i) === 0 || owner[i - 1] !== ci) seg(l, t, l, bo)
+          if (COL(i) === 8 || owner[i + 1] !== ci) seg(r, t, r, bo)
         }
+
         board.appendChild(svg)
 
         bodyEl.appendChild(board)
