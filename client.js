@@ -5903,33 +5903,68 @@ window.__ModuleLoader__.load({
           }
         }
 
-        // 组合提示：单选时显示它所在笼的可行组合
-        if (selSet.size === 1) {
-          const i = [...selSet][0]
-          const cage = cages[owner[i]]
-          if (cage) {
-            const used = cage.cells.filter((k) => g[k] > 0).map((k) => g[k])
-            const restSum = cage.sum - used.reduce((a, b) => a + b, 0)
-            const restN = cage.cells.length - used.length
-            const list = combos(restSum, restN).filter((c) => !c.some((d) => used.includes(d)))
-            const head = document.createElement('div')
-            head.style.cssText = 'font-size:12px;color:#4a6a92;font-weight:600;margin-top:2px'
-            head.textContent =
-              '这个笼的组合（' + restSum + ' / ' + restN + ' 格）' + (list.length ? '：' + list.length + ' 种' : '：无解')
-            box.appendChild(head)
-            if (list.length) {
-              const wrapC = document.createElement('div')
-              wrapC.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;max-height:96px;overflow:auto'
+        // 组合提示：常显。没选格子就留个说明，选一个格子就列它所在笼的组合
+        {
+          const head = document.createElement('div')
+          head.style.cssText = 'font-size:12px;color:#4a6a92;font-weight:600;margin-top:2px'
+          const bodyC = document.createElement('div')
+          bodyC.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;min-height:20px'
+
+          let list = null
+          let label = ''
+          if (selSet.size === 1) {
+            const i = [...selSet][0]
+            const cage = cages[owner[i]]
+            if (cage) {
+              const used = cage.cells.filter((k) => g[k] > 0).map((k) => g[k])
+              const restSum = cage.sum - used.reduce((a, b) => a + b, 0)
+              const restN = cage.cells.length - used.length
+              list = combos(restSum, restN).filter((c) => !c.some((d) => used.includes(d)))
+              label =
+                '这个笼的组合（' + restSum + ' / ' + restN + ' 格）' + (list.length ? '：' + list.length + ' 种' : '：无解')
+            }
+          } else if (selSet.size > 1) {
+            const owners = new Set([...selSet].map((k) => owner[k]))
+            if (owners.size === 1 && cages[[...owners][0]]) {
+              const cage = cages[[...owners][0]]
+              if (selSet.size === cage.cells.length) {
+                const used = cage.cells.filter((k) => g[k] > 0).map((k) => g[k])
+                const restSum = cage.sum - used.reduce((a, b) => a + b, 0)
+                const restN = cage.cells.length - used.length
+                list = combos(restSum, restN).filter((c) => !c.some((d) => used.includes(d)))
+                label =
+                  '整笼的组合（' + restSum + ' / ' + restN + ' 格）' + (list.length ? '：' + list.length + ' 种' : '：无解')
+              }
+            }
+          }
+
+          if (!label) {
+            head.textContent = '这个笼的组合'
+            const hint = document.createElement('span')
+            hint.textContent =
+              selSet.size > 1 ? '选中一格看组合' : '点一个格子，看它所在的笼能填哪些组合'
+            hint.style.cssText = 'font-size:11.5px;color:#a7b6c9'
+            bodyC.appendChild(hint)
+          } else {
+            head.textContent = label
+            if (list && list.length) {
               for (const c of list.slice(0, 60)) {
                 const t = document.createElement('span')
                 t.textContent = c.join('')
                 t.style.cssText =
                   'font:600 11px ui-monospace,monospace;padding:2px 6px;border-radius:6px;background:#eef3fb;color:#3f5f8a'
-                wrapC.appendChild(t)
+                bodyC.appendChild(t)
               }
-              box.appendChild(wrapC)
+            } else if (list) {
+              const t = document.createElement('span')
+              t.textContent = '没有可行组合'
+              t.style.cssText = 'font-size:11.5px;color:#d9534f'
+              bodyC.appendChild(t)
             }
           }
+
+          box.appendChild(head)
+          box.appendChild(bodyC)
         }
 
         // 计算器
