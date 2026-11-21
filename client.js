@@ -4970,6 +4970,7 @@ window.__ModuleLoader__.load({
         '</div>'
 
       document.body.appendChild(wrap)
+      attachScaler(wrap, 'ktv')
 
       const $ = (s) => wrap.querySelector(s)
       const codeEl = $('[data-code]')
@@ -5544,6 +5545,7 @@ window.__ModuleLoader__.load({
         '</div>' +
         '<div data-body style="flex:1;min-height:0;overflow:auto;padding:10px 12px"></div>'
       document.body.appendChild(wrap)
+      attachScaler(wrap, 'mahjong')
 
       const $ = (s) => wrap.querySelector(s)
       const bodyEl = $('[data-body]')
@@ -5849,6 +5851,44 @@ window.__ModuleLoader__.load({
       return { close: () => wrap.remove() }
     }
 
+
+    /** 给浮动窗口加一个等比缩放手柄（右下角），比例按窗口分别记在本地 */
+    function attachScaler(el, key) {
+      const SK = 'dsh-share-chat.scale.' + key
+      let scale = Number(readJson(SK)) || 1
+      if (!(scale >= 0.6 && scale <= 1.6)) scale = 1
+      el.style.transformOrigin = 'bottom right'
+      const apply = () => {
+        el.style.transform = scale === 1 ? '' : 'scale(' + scale.toFixed(3) + ')'
+      }
+      apply()
+      const h = document.createElement('div')
+      h.title = '拖动改变大小'
+      h.style.cssText =
+        'position:absolute;right:2px;bottom:2px;width:14px;height:14px;cursor:nwse-resize;' +
+        'border-radius:3px;background:rgba(0,0,0,.10);z-index:2147483647'
+      el.appendChild(h)
+      h.addEventListener('mousedown', (e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        const sx = e.clientX
+        const sy = e.clientY
+        const start = scale
+        const move = (ev) => {
+          const d = ev.clientX - sx + (ev.clientY - sy)
+          scale = Math.min(1.6, Math.max(0.6, start + d / 500))
+          apply()
+        }
+        const up = () => {
+          document.removeEventListener('mousemove', move)
+          document.removeEventListener('mouseup', up)
+          writeJson(SK, scale)
+        }
+        document.addEventListener('mousemove', move)
+        document.addEventListener('mouseup', up)
+      })
+    }
+
     /* ---------- 每日杀手数独 ---------- */
     /* ---------- 每日杀手数独 ---------- */
     function openKiller(opts) {
@@ -5906,6 +5946,7 @@ window.__ModuleLoader__.load({
         '</div>' +
         '</div>'
       document.body.appendChild(wrap)
+      attachScaler(wrap, 'killer')
 
       const $ = (s) => wrap.querySelector(s)
       const bodyEl = $('[data-body]')
@@ -6634,7 +6675,9 @@ window.__ModuleLoader__.load({
 
       const onKey = (e) => {
         if (!document.body.contains(wrap)) return
-        if (e.target && /^(INPUT|TEXTAREA)$/.test(e.target.tagName)) return
+        const t = e.target
+        if (t && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable)) return
+        if (t && t.closest && t.closest('[contenteditable="true"]')) return
         const k = e.key
         if (k >= '1' && k <= '9') {
           put(Number(k))
