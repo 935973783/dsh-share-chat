@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 社交 —— DSH 对话流里的一个 View
  *
  * 全部逻辑在浏览器里：直接调 relay 的 HTTPS API。
@@ -5707,23 +5707,25 @@ window.__ModuleLoader__.load({
 
       const wrap = document.createElement('div')
       wrap.style.cssText = [
-        'position:fixed', 'right:18px', 'bottom:18px', 'width:520px', 'max-width:calc(100vw - 16px)',
-        'max-height:calc(100vh - 24px)', 'z-index:2147483646', 'display:flex', 'flex-direction:column',
+        'position:fixed', 'right:18px', 'bottom:18px', 'width:820px', 'max-width:calc(100vw - 16px)',
+        'height:640px', 'max-height:calc(100vh - 24px)', 'z-index:2147483646', 'display:flex', 'flex-direction:column',
         'border-radius:16px', 'background:#fbfcfe', 'border:2px solid #dbe4f0',
         'box-shadow:0 24px 60px rgba(30,50,90,.28)',
         'font:13px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif', 'color:#1f2a37', 'overflow:hidden',
       ].join(';')
       wrap.innerHTML =
-        '<div style="display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid #e3eaf4">' +
+        '<div style="display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid #e3eaf4;flex:0 0 auto">' +
         '<b style="font-size:14px">🧩 杀手数独</b>' +
         '<span data-day style="font-size:12px;color:#7b8ca6"></span>' +
         '<span data-timer style="font-size:12px;color:#7b8ca6;margin-left:auto"></span>' +
         '<button data-close style="padding:5px 9px;border-radius:8px;border:1px solid #dbe4f0;background:#fff;cursor:pointer">✕</button>' +
         '</div>' +
-        '<div data-sel style="padding:0 12px"></div>' +
-        '<div style="flex:1;min-height:0;overflow:auto;padding:10px 12px 14px">' +
+        '<div style="display:flex;flex:1;min-height:0">' +
+        '<div style="flex:0 0 auto;overflow:auto;padding:10px 12px 12px">' +
+        '<div data-sel></div>' +
         '<div data-body></div>' +
-        '<div data-panel style="margin-top:10px"></div>' +
+        '</div>' +
+        '<div data-panel style="flex:1;min-width:0;border-left:1px solid #e3eaf4;overflow:auto;padding:12px"></div>' +
         '</div>'
       document.body.appendChild(wrap)
 
