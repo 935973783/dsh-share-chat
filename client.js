@@ -35,6 +35,9 @@ window.__ModuleLoader__.load({
 
     // ───────────────────────── 存取 ─────────────────────────
 
+    /** 记住上次打开的会话，下次进来自动落在那儿 */
+    const LAST_CONV_KEY = 'dsh-share-chat.lastConv'
+
     function readJson(key) {
       try {
         return JSON.parse(window.localStorage.getItem(key) || 'null')
@@ -772,13 +775,15 @@ window.__ModuleLoader__.load({
     function ChatPanel(props) {
       const auth = props.auth
       const [friends, setFriends] = useState([])
-      const [active, setActive] = useState(null)
+      const [active, setActive] = useState(() => readJson(LAST_CONV_KEY) || null)
       const [messages, setMessages] = useState([])
       const [draft, setDraft] = useState('')
       const [newFriend, setNewFriend] = useState('')
       const [err, setErr] = useState('')
       const [sending, setSending] = useState(false)
       const [uploading, setUploading] = useState(false)
+      // 正在上传的附件：先占一个气泡，成功就撤掉（真消息由 pull 补上），失败就留在原地标红
+      const [pending, setPending] = useState([])
       const [emojiOpen, setEmojiOpen] = useState(false)
       const [campMode, setCampMode] = useState(false)
       avatarBase = auth.server
@@ -795,6 +800,7 @@ window.__ModuleLoader__.load({
 
       useEffect(() => {
         activeRef.current = active
+        if (active) writeJson(LAST_CONV_KEY, active)
       }, [active])
 
       const loadFriends = useCallback(async () => {
@@ -802,6 +808,15 @@ window.__ModuleLoader__.load({
           const r = await api(auth.server, '/api/friends', { token: auth.token })
           setFriends(r.friends || [])
           setGroups(r.groups || [])
+          // 上次那个会话没了（退群/删好友）就退回第一个
+          const keys = (r.friends || []).map((f) => f.id)
+          for (const g of r.groups || []) keys.push('g:' + g.id)
+          const cur = activeRef.current
+          if (cur && keys.indexOf(cur) < 0) {
+            setActive(keys[0] || null)
+          } else if (!cur && keys.length) {
+            setActive(keys[0])
+          }
           return r.friends || []
         } catch (e) {
           setErr(friendly(e))
@@ -881,11 +896,30 @@ window.__ModuleLoader__.load({
         }
       }, [auth.server, auth.token])
 
-      // 新消息贴底
+      // 新消息贴底；切回社交面板时列表可能是隐藏的（高度 0），
+      // 所以除了立即贴底，还要在布局稳定后和高度变化时再贴一次
       useEffect(() => {
         const el = listRef.current
-        if (el) el.scrollTop = el.scrollHeight
-      }, [messages, active])
+        if (!el) return
+        const toBottom = () => {
+          el.scrollTop = el.scrollHeight
+        }
+        toBottom()
+        const t1 = window.setTimeout(toBottom, 50)
+        const t2 = window.setTimeout(toBottom, 260)
+        let ro = null
+        if (typeof ResizeObserver !== 'undefined') {
+          ro = new ResizeObserver(() => {
+            if (el.scrollHeight > el.clientHeight) toBottom()
+          })
+          ro.observe(el)
+        }
+        return () => {
+          window.clearTimeout(t1)
+          window.clearTimeout(t2)
+          if (ro) ro.disconnect()
+        }
+      }, [active, messages.length])
 
       const addFriend = async () => {
         const target = newFriend.trim()
@@ -928,6 +962,19 @@ window.__ModuleLoader__.load({
       /** 选中的文件：先上传，再发一条 image / file 消息 */
       const uploadAndSend = async (file) => {
         if (!active || !file) return
+        const pid = 'p' + Date.now() + Math.random().toString(36).slice(2, 6)
+        const mark = (patch) =>
+          setPending((prev) => prev.map((x) => (x.id === pid ? Object.assign({}, x, patch) : x)))
+        setPending((prev) =>
+          prev.concat({
+            id: pid,
+            name: file.name || '附件',
+            type: file.type || '',
+            size: file.size || 0,
+            status: 'uploading',
+            error: '',
+          }),
+        )
         setUploading(true)
         setErr('')
         try {
@@ -947,8 +994,10 @@ window.__ModuleLoader__.load({
           } catch (e) {
             /* 非 JSON */
           }
-          if (!res.ok) {
-            setErr(up && up.error === 'too-large' ? '文件太大（服务器上限 50 MB）' : '上传失败')
+          if (!res.ok || !up) {
+            const why = up && up.error === 'too-large' ? '文件太大（服务器上限 50 MB）' : '上传失败'
+            mark({ status: 'failed', error: why })
+            setErr(why + '：' + (file.name || ''))
             return
           }
           const isImage = String(file.type || '').startsWith('image/')
@@ -957,8 +1006,10 @@ window.__ModuleLoader__.load({
             token: auth.token,
             body: isImage ? { to: active, image: { uploadId: up.id } } : { to: active, file: { uploadId: up.id } },
           })
+          setPending((prev) => prev.filter((x) => x.id !== pid))
           await pull()
         } catch (e) {
+          mark({ status: 'failed', error: friendly(e) })
           setErr(friendly(e))
         } finally {
           setUploading(false)
@@ -1085,6 +1136,33 @@ window.__ModuleLoader__.load({
       }
 
       const thread = messages.filter((m) => m.from === active || m.to === active)
+
+      /** 正在上传 / 上传失败的附件，先占位显示，避免「点了没反应」 */
+      const renderPending = (p) => {
+        const failed = p.status === 'failed'
+        return h(
+          'div',
+          { key: p.id, className: 'sc-msg mine' },
+          h(
+            'div',
+            {
+              className: 'sc-file',
+              style: failed ? { borderColor: '#d9534f' } : { opacity: 0.7 },
+            },
+            h('span', { className: 'sc-file-ico' }, failed ? '⚠️' : fileIcon(p.type, p.name)),
+            h(
+              'span',
+              { className: 'sc-file-main' },
+              h('span', { className: 'sc-file-name' }, p.name),
+              h(
+                'span',
+                { className: 'sc-file-size' },
+                failed ? '失败：' + (p.error || '上传出错') : '上传中…  ' + kbText(p.size),
+              ),
+            ),
+          ),
+        )
+      }
 
       const renderMessage = (m) => {
         const b = m.body || {}
@@ -1336,9 +1414,9 @@ window.__ModuleLoader__.load({
                 { className: 'sc-thread-inner' },
                 !active
                   ? emptyState('💬', '选一个会话开始聊天', '左边是会话列表，点一下就进来')
-                  : thread.length === 0
+                  : thread.length === 0 && pending.length === 0
                     ? emptyState('🐟', '还没有消息', '说点什么，或者在上面的「分享这一轮」把对话发过去')
-                    : thread.map(renderMessage),
+                    : thread.map(renderMessage).concat(pending.map(renderPending)),
               ),
             ),
             h(
