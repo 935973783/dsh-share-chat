@@ -5990,6 +5990,7 @@ window.__ModuleLoader__.load({
         '<span data-day style="font-size:12px;color:#7b8ca6"></span>' +
         '<span data-stars style="font-size:12px;color:#d99a1f;font-weight:600"></span>' +
         '<button data-shop style="padding:4px 9px;border-radius:8px;border:1px solid #ffdca8;background:#fff8ec;color:#9a6a12;font:600 12px system-ui;cursor:pointer">🛍 商店</button>' +
+        '<button data-cal style="padding:4px 9px;border-radius:8px;border:1px solid #dbe4f0;background:#fff;font:600 12px system-ui;cursor:pointer">📅 日历</button>' +
         '<span data-timer style="font-size:12px;color:#7b8ca6;margin-left:auto"></span>' +
         '<button data-close style="padding:5px 9px;border-radius:8px;border:1px solid #dbe4f0;background:#fff;cursor:pointer">✕</button>' +
         '</div>' +
@@ -6484,6 +6485,144 @@ window.__ModuleLoader__.load({
       }
 
       $('[data-shop]').addEventListener('click', openShop)
+
+      /* ---------- 历史题日历 ---------- */
+      const openCalendar = async () => {
+        const old = wrap.querySelector('[data-cal-panel]')
+        if (old) {
+          old.remove()
+          return
+        }
+        let info = null
+        try {
+          info = await api(auth.server, '/api/killer/days', { token: auth.token })
+        } catch (e) {
+          onToast('日历没加载出来')
+          return
+        }
+        const map = new Map()
+        for (const d of info.days || []) map.set(d.day, d)
+        const solvedMap = info.solved || {}
+        let ym = (day || '').slice(0, 6) || '202601'
+
+        const panel = document.createElement('div')
+        panel.setAttribute('data-cal-panel', '1')
+        panel.style.cssText = [
+          'position:absolute',
+          'inset:0',
+          'z-index:6',
+          'background:rgba(251,252,254,.98)',
+          'padding:14px',
+          'overflow:auto',
+        ].join(';')
+
+        const render = () => {
+          panel.textContent = ''
+          const head = document.createElement('div')
+          head.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:10px'
+          const prev = document.createElement('button')
+          prev.textContent = '‹'
+          const next = document.createElement('button')
+          next.textContent = '›'
+          for (const b of [prev, next]) {
+            b.style.cssText =
+              'width:26px;height:26px;border-radius:8px;border:1px solid #dbe4f0;background:#fff;font:600 14px system-ui;cursor:pointer'
+          }
+          const shift = (n) => {
+            let y = Number(ym.slice(0, 4))
+            let m = Number(ym.slice(4, 6)) + n
+            if (m < 1) {
+              m = 12
+              y -= 1
+            }
+            if (m > 12) {
+              m = 1
+              y += 1
+            }
+            ym = String(y) + String(m).padStart(2, '0')
+            render()
+          }
+          prev.addEventListener('click', () => shift(-1))
+          next.addEventListener('click', () => shift(1))
+          const title = document.createElement('b')
+          title.textContent = ym.slice(0, 4) + ' 年 ' + Number(ym.slice(4, 6)) + ' 月'
+          title.style.cssText = 'font-size:13px'
+          const close = document.createElement('button')
+          close.textContent = '返回'
+          close.style.cssText =
+            'margin-left:auto;padding:4px 10px;border-radius:8px;border:1px solid #dbe4f0;background:#fff;font:600 12px system-ui;cursor:pointer'
+          close.addEventListener('click', () => panel.remove())
+          head.appendChild(prev)
+          head.appendChild(title)
+          head.appendChild(next)
+          head.appendChild(close)
+          panel.appendChild(head)
+
+          const grid = document.createElement('div')
+          grid.style.cssText = 'display:grid;grid-template-columns:repeat(7,1fr);gap:6px'
+          for (const w of ['日', '一', '二', '三', '四', '五', '六']) {
+            const c = document.createElement('div')
+            c.textContent = w
+            c.style.cssText = 'text-align:center;font-size:11px;color:#a7b6c9;padding-bottom:2px'
+            grid.appendChild(c)
+          }
+          const y = Number(ym.slice(0, 4))
+          const m = Number(ym.slice(4, 6))
+          const first = new Date(y, m - 1, 1).getDay()
+          const total = new Date(y, m, 0).getDate()
+          for (let i = 0; i < first; i++) grid.appendChild(document.createElement('div'))
+          for (let d = 1; d <= total; d++) {
+            const key = String(y) + String(m).padStart(2, '0') + String(d).padStart(2, '0')
+            const rec = map.get(key)
+            const b = document.createElement('button')
+            b.textContent = String(d)
+            const done = rec ? rec.numbers.filter((n) => solvedMap[key + ':' + n]).length : 0
+            b.style.cssText =
+              'height:44px;border-radius:9px;font:600 12.5px system-ui;cursor:' +
+              (rec ? 'pointer' : 'default') +
+              ';border:1px solid ' +
+              (rec ? '#dbe4f0' : 'transparent') +
+              ';background:' +
+              (rec ? (key === day ? '#e6f0ff' : '#fff') : 'transparent') +
+              ';color:' +
+              (rec ? '#1f2a37' : '#c7d2df') +
+              ';display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px'
+            if (rec) {
+              const tag = document.createElement('span')
+              tag.textContent = done ? '★'.repeat(done) : '有题'
+              tag.style.cssText = 'font-size:9px;color:' + (done ? '#d99a1f' : '#93a3ba')
+              b.appendChild(tag)
+              b.addEventListener('click', async () => {
+                try {
+                  const r = await api(auth.server, '/api/killer/day?d=' + key, { token: auth.token })
+                  day = r.day || key
+                  curSource = r.source || ''
+                  curStale = false
+                  myStars = Number(r.myStars) || myStars
+                  renderStars()
+                  puzzles = Array.isArray(r.puzzles) ? r.puzzles : []
+                  panel.remove()
+                  if (puzzles.length) applyPuzzle(0, true)
+                } catch (e) {
+                  onToast('这天的题没取到')
+                }
+              })
+            }
+            grid.appendChild(b)
+          }
+          panel.appendChild(grid)
+
+          const tip = document.createElement('div')
+          tip.textContent = '有题的日子点进去可以做；每道题第一次做对给一次星星，之后不再给。'
+          tip.style.cssText = 'font-size:11px;color:#a7b6c9;margin-top:10px;line-height:1.6'
+          panel.appendChild(tip)
+        }
+
+        render()
+        wrap.appendChild(panel)
+      }
+
+      $('[data-cal]').addEventListener('click', openCalendar)
 
 
 
