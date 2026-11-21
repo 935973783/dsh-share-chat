@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 社交 —— DSH 对话流里的一个 View
  *
  * 全部逻辑在浏览器里：直接调 relay 的 HTTPS API。
@@ -5706,11 +5706,15 @@ window.__ModuleLoader__.load({
         '<span data-timer style="font-size:12px;color:#7b8ca6;margin-left:auto"></span>' +
         '<button data-close style="padding:5px 9px;border-radius:8px;border:1px solid #dbe4f0;background:#fff;cursor:pointer">✕</button>' +
         '</div>' +
+        '<div data-sel style="padding:0 12px"></div>' +
         '<div data-body style="padding:12px"></div>'
       document.body.appendChild(wrap)
 
       const $ = (s) => wrap.querySelector(s)
       const bodyEl = $('[data-body]')
+      const selEl = $('[data-sel]')
+      let puzzles = []
+      let curIdx = 0
 
       let day = ''
       let cages = []
@@ -5729,7 +5733,66 @@ window.__ModuleLoader__.load({
         return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0')
       }
 
-      const keyOfDay = () => 'dsh-share-chat.killer.' + day
+      const keyOfDay = () => 'dsh-share-chat.killer.' + day + '.' + (puzzles[curIdx] ? puzzles[curIdx].number : 'x')
+
+      const applyPuzzle = (idx, keepProgress) => {
+        curIdx = idx
+        const pz = puzzles[idx]
+        cages = (pz && pz.cages) || []
+        cageStart = new Set()
+        cageSum = new Map()
+        cages.forEach((c) => {
+          const start = Math.min(...c.cells)
+          cageStart.add(start)
+          cageSum.set(start, c.sum)
+        })
+        grid = new Array(81).fill(0)
+        done = false
+        sel = -1
+        startedAt = 0
+        window.clearInterval(timer)
+        $('[data-timer]').textContent = ''
+        if (keepProgress) {
+          const saved = readJson(keyOfDay())
+          if (saved && Array.isArray(saved.grid) && saved.grid.length === 81) {
+            grid = saved.grid.slice()
+            startedAt = Number(saved.startedAt) || 0
+            if (startedAt && grid.some((x) => x > 0)) {
+              timer = window.setInterval(() => {
+                $('[data-timer]').textContent = fmt(Date.now() - startedAt)
+              }, 1000)
+            }
+          }
+        }
+        $('[data-day]').textContent =
+          day + (pz && pz.number ? ' · #' + pz.number : '') + (curSource === 'generated' ? ' · 自动出题' : '')
+        renderSel()
+        build()
+      }
+
+      const renderSel = () => {
+        selEl.textContent = ''
+        if (puzzles.length < 2) return
+        const bar = document.createElement('div')
+        bar.style.cssText = 'display:flex;gap:6px;justify-content:center;padding:10px 0 2px'
+        puzzles.forEach((pz, idx) => {
+          const b = document.createElement('button')
+          b.textContent = String(idx + 1)
+          b.title = '#' + pz.number
+          b.style.cssText =
+            'min-width:34px;height:28px;border-radius:8px;border:1px solid ' +
+            (idx === curIdx ? '#7ea8e0' : '#dbe4f0') +
+            ';background:' +
+            (idx === curIdx ? '#e6f0ff' : '#fff') +
+            ';font:600 12px system-ui;cursor:pointer'
+          b.addEventListener('click', () => {
+            if (idx === curIdx) return
+            applyPuzzle(idx, true)
+          })
+          bar.appendChild(b)
+        })
+        selEl.appendChild(bar)
+      }
 
       const save = () => {
         try {
@@ -5950,60 +6013,16 @@ window.__ModuleLoader__.load({
       api(auth.server, '/api/killer/today', { token: auth.token })
         .then((r) => {
           day = r.day || ''
-          const list = Array.isArray(r.puzzles) ? r.puzzles : []
-          const current = list[0] || { cages: [] }
-          cages = current.cages || []
-          $('[data-day]').textContent =
-            day + (current.number ? ' · #' + current.number : '') + (r.source === 'generated' ? ' · 自动出题' : '')
-          cageStart = new Set()
-          cageSum = new Map()
-          cages.forEach((c) => {
-            const start = Math.min(...c.cells)
-            cageStart.add(start)
-            cageSum.set(start, c.sum)
-          })
-          const saved = readJson(keyOfDay())
-          if (saved && Array.isArray(saved.grid) && saved.grid.length === 81) {
-            grid = saved.grid.slice()
-            startedAt = Number(saved.startedAt) || 0
-            if (startedAt && grid.some((x) => x > 0)) {
-              timer = window.setInterval(() => {
-                $('[data-timer]').textContent = fmt(Date.now() - startedAt)
-              }, 1000)
-            }
+          curSource = r.source || ''
+          puzzles = Array.isArray(r.puzzles) ? r.puzzles : []
+          if (!puzzles.length) {
+            bodyEl.textContent = '今天没有题目'
+            return
           }
-          build()
-          // 有多盘（不同难度）就给一排切换
-          if (list.length > 1) {
-            const bar = document.createElement('div')
-            bar.style.cssText = 'display:flex;gap:6px;margin:0 0 8px;justify-content:center'
-            list.forEach((pz, idx) => {
-              const b = document.createElement('button')
-              b.textContent = String(idx + 1)
-              b.title = '#' + pz.number
-              b.style.cssText =
-                'width:30px;height:26px;border-radius:7px;border:1px solid #dbe4f0;background:' +
-                (idx === 0 ? '#e6f0ff' : '#fff') +
-                ';font:600 12px system-ui;cursor:pointer'
-              b.addEventListener('click', () => {
-                cages = pz.cages
-                cageStart = new Set()
-                cageSum = new Map()
-                cages.forEach((c) => {
-                  const start = Math.min(...c.cells)
-                  cageStart.add(start)
-                  cageSum.set(start, c.sum)
-                })
-                grid = new Array(81).fill(0)
-                done = false
-                sel = -1
-                $('[data-day]').textContent = day + ' · #' + pz.number
-                build()
-              })
-              bar.appendChild(b)
-            })
-            bodyEl.insertBefore(bar, bodyEl.firstChild)
-          }
+          applyPuzzle(0, true)
+        })
+        .catch((e) => {
+          bodyEl.textContent = '题目加载失败：' + friendly(e)
         })
         .catch((e) => {
           bodyEl.textContent = '题目加载失败：' + friendly(e)
