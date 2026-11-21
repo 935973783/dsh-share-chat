@@ -55,66 +55,150 @@ export function apply(ctx) {
       scope.webServer.register({
         path: PREFIX + '/ask',
         kind: 'exact',
-        resource: async (req) => {
+        // 注意：resource 路由只收 GET/HEAD（其它方法由框架回 405），
+        // 这里要 POST，所以用 node 风格的 handler。
+        handler: (req, res) => {
+          const done = (status, body) => {
+            res.writeHead(status, {
+              'content-type': 'application/json; charset=utf-8',
+              'cache-control': 'no-store',
+            })
+            res.end(JSON.stringify(body))
+          }
           if (!isLoopbackOrigin(scope)) {
-            return json(403, { error: 'not-loopback', hint: '公用部署下不开放模型调用' })
+            return done(403, { error: 'not-loopback', hint: '公用部署下不开放模型调用' })
           }
-          if (req.method !== 'POST') return json(405, { error: 'method' })
-          let prompt = ''
-          try {
-            const body = await req.json()
-            prompt = String(body && body.prompt ? body.prompt : '').slice(0, 4000)
-          } catch {
-            prompt = ''
-          }
-          if (!prompt) return json(400, { error: 'empty' })
+          if (req.method !== 'POST') return done(405, { error: 'method' })
 
-          const pickId = (v) =>
-            typeof v === 'string' ? v : (v && (v.id || v.provider || v.name || v.route)) || ''
-
-          try {
-            const providers = await Promise.resolve(scope.llm.listProviders())
-            const provider = pickId((providers || [])[0])
-            if (!provider) return json(503, { error: 'no-provider' })
-
-            let models = []
-            try {
-              models = await Promise.resolve(scope.llm.listModels(provider))
-            } catch {
-              models = []
+          let raw = ''
+          let tooBig = false
+          req.on('data', (c) => {
+            raw += c
+            if (raw.length > 200000) {
+              tooBig = true
+              req.destroy()
             }
-            const model = pickId((models || [])[0])
-            if (!model) return json(503, { error: 'no-model' })
+          })
+          req.on('end', async () => {
+            if (tooBig) return done(413, { error: 'too-large' })
+            let parsed = {}
+            try {
+              parsed = JSON.parse(raw || '{}') || {}
+            } catch {
+              parsed = {}
+            }
+            const prompt = String(parsed.prompt || '').slice(0, 4000)
 
-            const messages = [
-              {
-                role: 'system',
-                content: [
-                  {
-                    type: 'text',
-                    text: '你是聊天里的助手。用简体中文回答，300 字以内，直接给结论，不要客套和重复问题。',
-                  },
-                ],
-              },
-              { role: 'user', content: [{ type: 'text', text: prompt }] },
-            ]
+            const pickId = (v) =>
+              typeof v === 'string' ? v : (v && (v.id || v.provider || v.name || v.route)) || ''
 
-            let text = ''
-            for await (const chunk of scope.llm.stream({ provider, model, messages })) {
-              if (!chunk) continue
-              if (chunk.type === 'text-delta' && typeof chunk.text === 'string') {
-                text += chunk.text
-              } else if (chunk.type === 'finish' && chunk.reason && chunk.reason.kind === 'error') {
-                const f = chunk.reason.failure || {}
-                return json(502, { error: 'llm-error', detail: String(f.message || f.code || '') })
+            // 探针：只报告路由/提供方/模型，不调模型，用来定位问题
+            if (parsed.probe) {
+              try {
+                const providers = (await Promise.resolve(scope.llm.listProviders())).map(pickId)
+                const table = []
+                for (const p of providers) {
+                  let ms = []
+                  try {
+                    ms = await Promise.resolve(scope.llm.listModels(p))
+                  } catch (e) {
+                    ms = []
+                  }
+                  table.push({ provider: p, models: (ms || []).map(pickId).slice(0, 8) })
+                }
+                return done(200, { ok: true, table })
+              } catch (e) {
+                return done(500, { error: 'probe-failed', detail: String((e && e.message) || e) })
               }
             }
-            text = String(text || '').trim()
-            if (!text) return json(502, { error: 'empty-answer' })
-            return json(200, { text, provider, model })
-          } catch (e) {
-            return json(500, { error: 'ask-failed', detail: String((e && e.message) || e) })
-          }
+
+            if (!prompt) return done(400, { error: 'empty' })
+
+            try {
+              const providers = (await Promise.resolve(scope.llm.listProviders())).map(pickId)
+              if (!providers.length) return done(503, { error: 'no-provider' })
+
+              // 优先官方/账号通道，其次非 web 驱动，最后才 web（要浏览器会话，容易挂）
+              const ordered = [
+                ...providers.filter((p) => /official|account|api-key/i.test(p)),
+                ...providers.filter(
+                  (p) => !/official|account|api-key/i.test(p) && !/web/i.test(p),
+                ),
+                ...providers.filter((p) => /web/i.test(p) && !/official|account|api-key/i.test(p)),
+              ]
+              let provider = ''
+              let model = ''
+              for (const p of ordered) {
+                let ms = []
+                try {
+                  ms = await Promise.resolve(scope.llm.listModels(p))
+                } catch {
+                  ms = []
+                }
+                const m = pickId((ms || [])[0])
+                if (m) {
+                  provider = p
+                  model = m
+                  break
+                }
+              }
+              if (!provider) return done(503, { error: 'no-model-anywhere' })
+
+              const messages = [
+                {
+                  role: 'system',
+                  content: [
+                    {
+                      type: 'text',
+                      text: '你是聊天里的助手。用简体中文回答，300 字以内，直接给结论，不要客套和重复问题。',
+                    },
+                  ],
+                },
+                { role: 'user', content: [{ type: 'text', text: prompt }] },
+              ]
+
+              let text = ''
+              let timedOut = false
+              const ac = new AbortController()
+              const timer = setTimeout(() => {
+                timedOut = true
+                ac.abort()
+              }, 60000)
+              try {
+                for await (const chunk of scope.llm.stream({
+                  provider,
+                  model,
+                  messages,
+                  signal: ac.signal,
+                })) {
+                  if (!chunk) continue
+                  if (chunk.type === 'text-delta' && typeof chunk.text === 'string') {
+                    text += chunk.text
+                  } else if (
+                    chunk.type === 'finish' &&
+                    chunk.reason &&
+                    chunk.reason.kind === 'error'
+                  ) {
+                    const f = chunk.reason.failure || {}
+                    clearTimeout(timer)
+                    return done(502, {
+                      error: 'llm-error',
+                      detail: String(f.message || f.code || ''),
+                    })
+                  }
+                }
+              } finally {
+                clearTimeout(timer)
+              }
+              if (timedOut) return done(504, { error: 'timeout', provider, model })
+              text = String(text || '').trim()
+              if (!text) return done(502, { error: 'empty-answer', provider, model })
+              return done(200, { text, provider, model })
+            } catch (e) {
+              return done(500, { error: 'ask-failed', detail: String((e && e.message) || e) })
+            }
+          })
+          req.on('error', () => {})
         },
       }),
     )
