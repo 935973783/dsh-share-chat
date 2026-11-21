@@ -846,6 +846,17 @@ window.__ModuleLoader__.load({
             if (alive && me && me.avatar) setMyAvatar(me.avatar)
           })
           .catch(() => {})
+        // 背景以服务端为准（跨设备），本地只是缓存
+        api(auth.server, '/api/bg', { token: auth.token })
+          .then((r) => {
+            if (!alive || !r || !r.bgs) return
+            setBgMap((prev) => {
+              const merged = Object.assign({}, prev, r.bgs)
+              writeJson(BG_KEY, merged)
+              return merged
+            })
+          })
+          .catch(() => {})
         return () => {
           alive = false
         }
@@ -1040,11 +1051,19 @@ window.__ModuleLoader__.load({
       const bgOf = (key) => (key && bgMap[key]) || null
       const setBgFor = (key, bg) => {
         if (!key) return
-        const next = Object.assign({}, bgMap)
-        if (bg) next[key] = bg
-        else delete next[key]
-        setBgMap(next)
-        writeJson(BG_KEY, next)
+        setBgMap((prev) => {
+          const next = Object.assign({}, prev)
+          if (bg) next[key] = bg
+          else delete next[key]
+          writeJson(BG_KEY, next)
+          return next
+        })
+        // 同步到账号上，换设备也跟着走
+        api(auth.server, '/api/bg', {
+          method: 'POST',
+          token: auth.token,
+          body: { key, bg: bg || null },
+        }).catch(() => setErr('背景同步失败，仅本机生效'))
       }
       const bgStyle = (bg) => {
         if (!bg) return {}
@@ -1059,6 +1078,30 @@ window.__ModuleLoader__.load({
         }
         return {}
       }
+      /** 侧栏卡片：背景铺满 + 左侧白色蒙版，保证名字和摘要读得清 */
+      const cardStyle = (bg, isActive) => {
+        const active = isActive
+          ? { boxShadow: 'inset 0 0 0 2px var(--dsw-alias-brand-primary,#5aa9e6)' }
+          : {}
+        if (!bg) return active
+        const layer =
+          bg.type === 'color'
+            ? 'linear-gradient(' + bg.v + ',' + bg.v + ')'
+            : bg.type === 'grad'
+              ? bg.v
+              : 'url(' + auth.server + bg.v + ')'
+        return Object.assign(
+          {
+            backgroundImage:
+              'linear-gradient(90deg, rgba(255,255,255,.78), rgba(255,255,255,.28))' + ',' + layer,
+            backgroundSize: 'cover',
+            backgroundPosition: 'center',
+            overflow: 'hidden',
+          },
+          active,
+        )
+      }
+
       const bgThumb = (bg, size) => {
         if (!bg) return null
         const s = size || 18
@@ -1442,6 +1485,8 @@ window.__ModuleLoader__.load({
                         className: 'sc-friend' + (active === c.key ? ' on' : ''),
                         onClick: () => setActive(c.key),
                         title: c.key,
+                        // 会话卡片直接用这个会话的聊天背景铺满
+                        style: cardStyle(bgOf(c.key), active === c.key),
                       },
                       c.kind === 'group'
                         ? avatar(c.title, c.key, 30, c.avatar, true)
@@ -1456,8 +1501,6 @@ window.__ModuleLoader__.load({
                         ),
                         h('div', { className: 'sc-friend-last' }, previewOf(lastOf(c.key)) || '还没有消息'),
                       ),
-                      // 卡片上也带一张聊天背景的缩略图，一眼认出这个会话
-                      bgThumb(bgOf(c.key), 18),
                     ),
                   ),
             ),
