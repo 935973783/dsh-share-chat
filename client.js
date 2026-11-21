@@ -1194,6 +1194,15 @@ window.__ModuleLoader__.load({
             '📹 开会',
           ),
           h('button', { className: 'sc-btn', onClick: props.onOpenGame, title: '玩一把鱼塘摸鱼' }, '🎮 摸鱼'),
+          h(
+            'button',
+            {
+              className: 'sc-btn',
+              onClick: () => openKtv({ auth, onToast: (m) => setErr(m), target: active }),
+              title: '一起唱歌：同步伴奏 + 语音',
+            },
+            '🎤 KTV',
+          ),
           h('button', { className: 'sc-btn sc-btn-ghost', onClick: props.onLogout }, '退出'),
         ),
         /* 主体 */
@@ -4105,6 +4114,15 @@ window.__ModuleLoader__.load({
       /* ---------- 进出房间 ---------- */
       async function ensureMedia() {
         if (localStream) return
+        if (opts.audioOnly) {
+          // KTV：只要麦克风，别开摄像头
+          localStream = await navigator.mediaDevices.getUserMedia({ audio: true })
+          camOn = false
+          tile('self', '我', localStream, true)
+          relayout()
+          renderToolbar()
+          return
+        }
         try {
           localStream = await navigator.mediaDevices.getUserMedia({
             audio: true,
@@ -4151,6 +4169,13 @@ window.__ModuleLoader__.load({
         } catch (e) {
           alert('进不去：' + friendly(e))
         }
+      }
+
+      // KTV 用：带房间号直接进，不用再点「加入」
+      if (opts.roomId) {
+        window.setTimeout(() => {
+          startMeeting('join', String(opts.roomId)).catch(() => {})
+        }, 250)
       }
 
       async function leave() {
@@ -4224,6 +4249,362 @@ window.__ModuleLoader__.load({
     }
 
     // ───────────────────────── 入口 ─────────────────────────
+
+    /* ---------- KTV ---------- */
+    /**
+     * 房间里的伴奏同步：服务端存锚点（第几秒、是否在放、锚点时刻），
+     * 客户端只用自己的本地时间差推算该播到哪，偶发漂移超过 0.45 秒才校正，
+     * 这样既不会各唱各的，也不会因为网络抖动一直卡。
+     */
+    function openKtv(opts) {
+      const auth = opts.auth
+      const onToast = opts.onToast || (() => {})
+      const target = opts.target || ''
+
+      const B =
+        'padding:6px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.06);color:inherit;font-size:12px;cursor:pointer;white-space:nowrap'
+      const IN =
+        'flex:1;min-width:0;padding:6px 9px;border-radius:8px;border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.04);color:inherit;font-size:12px'
+
+      const wrap = document.createElement('div')
+      wrap.style.cssText = [
+        'position:fixed',
+        'right:18px',
+        'bottom:18px',
+        'width:400px',
+        'max-width:calc(100vw - 20px)',
+        'height:540px',
+        'max-height:calc(100vh - 30px)',
+        'z-index:2147483646',
+        'display:flex',
+        'flex-direction:column',
+        'overflow:hidden',
+        'border-radius:16px',
+        'background:#1b1d22',
+        'color:#e8eaed',
+        'border:1px solid rgba(255,255,255,.12)',
+        'box-shadow:0 24px 60px rgba(0,0,0,.5)',
+        'font:13px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif',
+      ].join(';')
+
+      wrap.innerHTML =
+        '<div style="display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.1)">' +
+        '<b style="font-size:14px">🎤 KTV</b>' +
+        '<span data-code style="opacity:.6;font-size:12px"></span>' +
+        '<span style="flex:1"></span>' +
+        '<button data-close style="' +
+        B +
+        '">✕</button>' +
+        '</div>' +
+        '<div style="padding:10px 12px;display:flex;flex-direction:column;gap:8px;overflow:auto;flex:1">' +
+        '<div style="display:flex;gap:6px">' +
+        '<input data-room placeholder="房间号" style="' +
+        IN +
+        '">' +
+        '<button data-join style="' +
+        B +
+        '">加入</button>' +
+        '<button data-create style="' +
+        B +
+        '">建房</button>' +
+        '</div>' +
+        '<div style="display:flex;gap:6px;align-items:center">' +
+        '<button data-upload style="' +
+        B +
+        '">＋ 上传伴奏</button>' +
+        '<span data-hint style="opacity:.55;font-size:11px">mp3 / m4a / wav，≤50 MB</span>' +
+        '</div>' +
+        '<div data-tracks style="display:flex;flex-direction:column;gap:3px"></div>' +
+        '</div>' +
+        '<div style="border-top:1px solid rgba(255,255,255,.1);padding:10px 12px">' +
+        '<div data-now style="font-size:12px;opacity:.75;margin-bottom:6px">还没选伴奏</div>' +
+        '<input data-seek type="range" min="0" max="1000" value="0" style="width:100%;accent-color:#5aa9e6">' +
+        '<div style="display:flex;gap:6px;align-items:center;margin-top:6px">' +
+        '<button data-play style="' +
+        B +
+        '">▶ 播放</button>' +
+        '<span data-time style="font-size:11px;opacity:.65">0:00 / 0:00</span>' +
+        '<span style="flex:1"></span>' +
+        '<button data-mic style="' +
+        B +
+        '">🎙 开麦</button>' +
+        '<button data-share style="' +
+        B +
+        '">发到群里</button>' +
+        '</div>' +
+        '</div>'
+
+      document.body.appendChild(wrap)
+
+      const $ = (s) => wrap.querySelector(s)
+      const codeEl = $('[data-code]')
+      const hintEl = $('[data-hint]')
+      const tracksEl = $('[data-tracks]')
+      const nowEl = $('[data-now]')
+      const seekEl = $('[data-seek]')
+      const timeEl = $('[data-time]')
+      const playBtn = $('[data-play]')
+
+      let roomId = ''
+      let tracks = []
+      let current = null
+      let sync = { playing: false, pos: 0, t0: 0 }
+      let closeTimer = null
+      let tickTimer = null
+      let seekBusy = false
+
+      const audio = new Audio()
+      audio.preload = 'auto'
+      audio.crossOrigin = 'anonymous'
+
+      const fmt = (s) => {
+        const n = Math.max(0, Math.floor(Number(s) || 0))
+        return Math.floor(n / 60) + ':' + String(n % 60).padStart(2, '0')
+      }
+
+      const setHint = (t) => {
+        hintEl.textContent = t
+      }
+
+      const renderTracks = () => {
+        tracksEl.textContent = ''
+        if (!tracks.length) {
+          const d = document.createElement('div')
+          d.style.cssText = 'opacity:.5;font-size:12px;padding:6px 2px'
+          d.textContent = '伴奏库是空的，先上传一首'
+          tracksEl.appendChild(d)
+          return
+        }
+        for (const t of tracks) {
+          const row = document.createElement('div')
+          row.style.cssText =
+            'display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:8px;cursor:pointer;' +
+            (current && current.id === t.id ? 'background:rgba(90,169,230,.22)' : 'background:rgba(255,255,255,.04)')
+          const name = document.createElement('div')
+          name.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'
+          name.textContent = '♪ ' + t.title + (t.artist ? ' — ' + t.artist : '')
+          name.title = (t.title || '') + ' · ' + (t.by || '')
+          row.appendChild(name)
+          row.addEventListener('click', () => choose(t))
+          tracksEl.appendChild(row)
+        }
+      }
+
+      const loadTracks = async () => {
+        try {
+          const r = await api(auth.server, '/api/ktv/tracks', { token: auth.token })
+          tracks = r.tracks || []
+          renderTracks()
+        } catch (e) {
+          setHint('伴奏库读取失败')
+        }
+      }
+
+      const postKtv = async (patch) => {
+        if (!roomId) {
+          onToast('先建房或加入房间')
+          return
+        }
+        try {
+          const body = {
+            trackId: current ? current.id : '',
+            playing: sync.playing,
+            position: sync.playing ? sync.pos + (performance.now() - sync.t0) / 1000 : sync.pos,
+            ...patch,
+          }
+          const r = await api(auth.server, '/api/meet/rooms/' + roomId + '/ktv', {
+            method: 'POST',
+            token: auth.token,
+            body,
+          })
+          applySync(r.ktv)
+        } catch (e) {
+          onToast('同步失败：' + friendly(e))
+        }
+      }
+
+      const applySync = (ktv) => {
+        if (!ktv || !ktv.trackId) return
+        const t = tracks.find((x) => x.id === ktv.trackId)
+        if (t && (!current || current.id !== t.id)) {
+          current = t
+          audio.src = auth.server + t.url
+          renderTracks()
+        }
+        sync = { playing: !!ktv.playing, pos: Number(ktv.elapsed) || 0, t0: performance.now() }
+        nowEl.textContent = current ? '正在放：' + current.title : '还没选伴奏'
+        playBtn.textContent = sync.playing ? '⏸ 暂停' : '▶ 播放'
+      }
+
+      const tick = () => {
+        if (!current) return
+        const pos = sync.playing ? sync.pos + (performance.now() - sync.t0) / 1000 : sync.pos
+        const dur = Number.isFinite(audio.duration) ? audio.duration : 0
+        if (dur > 0 && !seekBusy) {
+          seekEl.value = String(Math.round((pos / dur) * 1000))
+          timeEl.textContent = fmt(pos) + ' / ' + fmt(dur)
+        }
+        if (sync.playing) {
+          if (audio.paused) audio.play().catch(() => {})
+          if (dur > 0 && Math.abs(audio.currentTime - pos) > 0.45) audio.currentTime = Math.min(pos, dur - 0.05)
+        } else if (!audio.paused) {
+          audio.pause()
+          if (dur > 0) audio.currentTime = Math.min(pos, dur - 0.05)
+        }
+      }
+
+      const choose = (t) => {
+        current = t
+        sync = { playing: false, pos: 0, t0: performance.now() }
+        audio.src = auth.server + t.url
+        renderTracks()
+        nowEl.textContent = '正在放：' + t.title
+        playBtn.textContent = '▶ 播放'
+        if (roomId) postKtv({ trackId: t.id, playing: false, position: 0 })
+      }
+
+      const joinRoom = async (id) => {
+        if (!id) return
+        try {
+          const r = await api(auth.server, '/api/meet/rooms/' + id, { token: auth.token })
+          roomId = id
+          codeEl.textContent = '房间 ' + id
+          applySync(r.room && r.room.ktv)
+          onToast('已进入 KTV 房间 ' + id)
+        } catch (e) {
+          onToast('房间不存在：' + id)
+        }
+      }
+
+      const refresh = async () => {
+        if (!roomId) return
+        try {
+          const r = await api(auth.server, '/api/meet/rooms/' + roomId, { token: auth.token })
+          const ktv = r.room && r.room.ktv
+          if (ktv && ktv.trackId) {
+            const same = current && current.id === ktv.trackId
+            const drift = Math.abs((Number(ktv.elapsed) || 0) - (sync.playing ? sync.pos + (performance.now() - sync.t0) / 1000 : sync.pos))
+            if (!same || ktv.playing !== sync.playing || drift > 0.6) applySync(ktv)
+          }
+        } catch (e) {
+          /* 房间没了就算了 */
+        }
+      }
+
+      const upload = async (file) => {
+        if (!file) return
+        setHint('上传中…')
+        try {
+          const buf = await file.arrayBuffer()
+          const res = await fetch(auth.server + '/api/upload', {
+            method: 'POST',
+            headers: {
+              authorization: 'Bearer ' + auth.token,
+              'content-type': file.type || 'application/octet-stream',
+              'x-filename': encodeURIComponent(file.name || '伴奏'),
+            },
+            body: buf,
+          })
+          const up = await res.json().catch(() => null)
+          if (!res.ok || !up) {
+            setHint(up && up.error === 'too-large' ? '文件太大（≤50 MB）' : '上传失败')
+            return
+          }
+          const title = String(file.name || '伴奏').replace(/\.[^.]+$/, '')
+          await api(auth.server, '/api/ktv/tracks', {
+            method: 'POST',
+            token: auth.token,
+            body: { uploadId: up.id, title },
+          })
+          setHint('已加入伴奏库')
+          await loadTracks()
+        } catch (e) {
+          setHint('上传失败：' + friendly(e))
+        }
+      }
+
+      /* 事件绑定 */
+      $('[data-close]').addEventListener('click', () => {
+        window.clearInterval(tickTimer)
+        window.clearInterval(closeTimer)
+        try {
+          audio.pause()
+          audio.src = ''
+        } catch (e) {}
+        wrap.remove()
+      })
+      $('[data-join]').addEventListener('click', () => joinRoom(String($('[data-room]').value || '').trim()))
+      $('[data-create]').addEventListener('click', async () => {
+        try {
+          const r = await api(auth.server, '/api/meet/rooms', {
+            method: 'POST',
+            token: auth.token,
+            body: { title: (auth.displayName || auth.id) + ' 的 KTV' },
+          })
+          await joinRoom(r.room.id)
+        } catch (e) {
+          onToast('建房失败：' + friendly(e))
+        }
+      })
+      $('[data-upload]').addEventListener('click', () => {
+        const inp = document.createElement('input')
+        inp.type = 'file'
+        inp.accept = 'audio/*'
+        inp.addEventListener('change', () => {
+          const f = inp.files && inp.files[0]
+          if (f) upload(f)
+        })
+        inp.click()
+      })
+      playBtn.addEventListener('click', () => {
+        if (!current) {
+          onToast('先选一首伴奏')
+          return
+        }
+        postKtv({ playing: !sync.playing })
+      })
+      seekEl.addEventListener('input', () => {
+        seekBusy = true
+      })
+      seekEl.addEventListener('change', () => {
+        seekBusy = false
+        const dur = Number.isFinite(audio.duration) ? audio.duration : 0
+        if (dur > 0) postKtv({ position: (Number(seekEl.value) / 1000) * dur })
+      })
+      $('[data-mic]').addEventListener('click', () => {
+        if (!roomId) {
+          onToast('先建房或加入房间')
+          return
+        }
+        openMeeting({ auth, roomId, audioOnly: true, onToast })
+      })
+      $('[data-share]').addEventListener('click', async () => {
+        if (!roomId) {
+          onToast('先建房或加入房间')
+          return
+        }
+        if (!target) {
+          onToast('先在左边选一个群')
+          return
+        }
+        try {
+          await api(auth.server, '/api/messages', {
+            method: 'POST',
+            token: auth.token,
+            body: { to: target, text: '🎤 来唱K！房间号 ' + roomId + '（点右上「KTV」→ 加入）' },
+          })
+          onToast('已发到群里')
+        } catch (e) {
+          onToast('发送失败：' + friendly(e))
+        }
+      })
+
+      loadTracks()
+      tickTimer = window.setInterval(tick, 400)
+      closeTimer = window.setInterval(refresh, 2000)
+
+      return { close: () => wrap.remove() }
+    }
 
     function SocialView(props) {
       const [auth, setAuth] = useState(() => readJson(K_AUTH))
