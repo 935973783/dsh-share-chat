@@ -306,7 +306,7 @@ window.__ModuleLoader__.load({
 
 /* 聊天外壳 */
 .sc-chat{flex:1;min-height:0;display:flex;flex-direction:column}
-.sc-chat-head{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.20));flex:0 0 auto}
+.sc-chat-head{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.20));flex:0 0 auto;position:sticky;top:0;z-index:6;background:var(--dsw-alias-bg-l1,Canvas);backdrop-filter:blur(8px)}
 .sc-chat-name{font-size:13.5px;font-weight:600;line-height:1.2}
 .sc-chat-sub{font-size:11.5px;color:var(--dsw-alias-label-tertiary,#8b949e);line-height:1.3}
 .sc-chat-body{flex:1;min-height:0;display:flex}
@@ -331,7 +331,7 @@ window.__ModuleLoader__.load({
 .sc-msg-row{display:flex;gap:8px;align-items:flex-start;max-width:100%}
 .sc-msg-row.mine{flex-direction:row-reverse}
 .sc-msg-row>.sc-avatar{margin-top:2px}
-.sc-msg-row .sc-msg{max-width:78%}
+.sc-msg-row .sc-msg{flex:1 1 auto;min-width:0;max-width:none}
 .sc-bubble{max-width:min(78%,560px);padding:8px 12px;border-radius:14px 14px 14px 4px;background:var(--dsw-alias-fill-l2,rgba(128,128,128,.12));white-space:pre-wrap;word-break:break-word}
 .sc-msg.mine .sc-bubble{background:var(--dsw-alias-brand-primary,#247bbf);color:var(--dsw-alias-label-on-color,#fff);border-radius:14px 14px 4px 14px}
 .sc-time{font-size:10.5px;color:var(--dsw-alias-label-quaternary,#a0a8b0);padding:0 4px}
@@ -351,7 +351,7 @@ window.__ModuleLoader__.load({
 .sc-empty-hint{font-size:11.5px;opacity:.8}
 
 /* 输入区 */
-.sc-composer{flex:0 0 auto;border-top:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.20));padding:10px 14px 12px}
+.sc-composer{flex:0 0 auto;border-top:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.20));padding:10px 14px 12px;position:sticky;bottom:0;z-index:6;background:var(--dsw-alias-bg-l1,Canvas)}
 .sc-composer-inner{max-width:760px;margin:0 auto;display:flex;flex-direction:column;gap:8px}
 .sc-emoji{display:flex;flex-wrap:wrap;gap:2px;max-height:112px;overflow:auto;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.20));border-radius:12px;padding:6px;background:var(--dsw-alias-bg-elevated,transparent)}
 .sc-emoji button{border:0;background:transparent;font-size:17px;line-height:1;padding:4px 5px;border-radius:7px;cursor:pointer}
@@ -5148,14 +5148,46 @@ window.__ModuleLoader__.load({
       useEffect(() => {
         const el = rootRef.current
         if (!el) return
+
+        // 真正的滚动容器不一定是 documentElement，也可能是 DSH 的某个内层 div
+        const findScroller = (node) => {
+          let p = node.parentElement
+          while (p && p !== document.body && p !== document.documentElement) {
+            const cs = window.getComputedStyle(p)
+            if (/(auto|scroll)/.test(cs.overflowY)) return p
+            p = p.parentElement
+          }
+          return null
+        }
+
         const fit = () => {
           const rect = el.getBoundingClientRect()
-          const top = Math.max(0, Math.round(rect.top))
-          const h = Math.max(320, window.innerHeight - top - 6)
+          const sc = findScroller(el)
+          let h
+          if (sc) {
+            const sr = sc.getBoundingClientRect()
+            const offTop = Math.max(0, Math.round(rect.top - sr.top))
+            h = Math.round(sr.height - offTop - 4)
+          } else {
+            h = Math.round(window.innerHeight - Math.max(0, Math.round(rect.top)) - 6)
+          }
+          h = Math.max(280, h)
           el.style.height = h + 'px'
           el.style.maxHeight = h + 'px'
           el.style.overflow = 'hidden'
+
+          // 万一还是把外层撑出滚动条，再按超出量回缩
+          const doc = document.documentElement
+          const contentH = Math.max(doc.scrollHeight, document.body ? document.body.scrollHeight : 0)
+          const viewH = Math.max(doc.clientHeight, window.innerHeight)
+          const over = contentH - viewH
+          if (over > 2) {
+            h = Math.max(280, h - over - 2)
+            el.style.height = h + 'px'
+            el.style.maxHeight = h + 'px'
+          }
         }
+
         fit()
         const timers = [60, 260, 900].map((d) => window.setTimeout(fit, d))
         window.addEventListener('resize', fit)
