@@ -158,6 +158,90 @@ window.__ModuleLoader__.load({
       return '📄'
     }
 
+
+    /**
+     * 主题自适应兜底：找自己背后真正有颜色的那一层，判断是亮面还是暗面。
+     * 某些槽位（比如 main 面板）不会把 DSH 的暗色背景带下来，此时 token 可能是
+     * 「白字」而背景是白的 —— 这里按实际背景强制一套可读的 token。
+     */
+    function parseColorToRgb(value) {
+      const m = String(value || '').match(/rgba?\(([^)]+)\)/)
+      if (!m) return null
+      const parts = m[1].split(',').map((x) => parseFloat(x.trim()))
+      if (parts.length < 3 || parts.some((n) => Number.isNaN(n))) return null
+      return { r: parts[0], g: parts[1], b: parts[2], a: parts.length > 3 ? parts[3] : 1 }
+    }
+
+    function relativeLuminance(c) {
+      const f = (v) => {
+        const x = v / 255
+        return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4)
+      }
+      return 0.2126 * f(c.r) + 0.7152 * f(c.g) + 0.0722 * f(c.b)
+    }
+
+    function effectiveBackground(el) {
+      let node = el
+      while (node && node.nodeType === 1) {
+        const c = parseColorToRgb(getComputedStyle(node).backgroundColor)
+        if (c && c.a > 0.5) return c
+        node = node.parentElement
+      }
+      return { r: 255, g: 255, b: 255, a: 1 }
+    }
+
+    const LIGHT_TOKENS = {
+      '--dsw-alias-label-primary': '#1f2328',
+      '--dsw-alias-label-secondary': '#5b6570',
+      '--dsw-alias-label-tertiary': '#8b949e',
+      '--dsw-alias-label-quaternary': '#a0a8b0',
+      '--dsw-alias-border-l2': 'rgba(20,20,20,.12)',
+      '--dsw-alias-border-l3': 'rgba(20,20,20,.18)',
+      '--dsw-alias-fill-l1': 'rgba(0,0,0,.035)',
+      '--dsw-alias-fill-l2': 'rgba(0,0,0,.07)',
+      '--dsw-alias-card-fill': 'rgba(0,0,0,.04)',
+      '--dsw-alias-card-fill-hover': 'rgba(0,0,0,.08)',
+      '--dsw-alias-interactive-bg-hover': 'rgba(0,0,0,.06)',
+      '--dsw-alias-brand-primary': '#247bbf',
+      '--dsw-alias-link': '#247bbf',
+    }
+
+    const DARK_TOKENS = {
+      '--dsw-alias-label-primary': '#e9f2f6',
+      '--dsw-alias-label-secondary': '#9fb3bd',
+      '--dsw-alias-label-tertiary': '#7c939d',
+      '--dsw-alias-label-quaternary': '#5f757e',
+      '--dsw-alias-border-l2': 'rgba(255,255,255,.12)',
+      '--dsw-alias-border-l3': 'rgba(255,255,255,.18)',
+      '--dsw-alias-fill-l1': 'rgba(255,255,255,.035)',
+      '--dsw-alias-fill-l2': 'rgba(255,255,255,.08)',
+      '--dsw-alias-card-fill': 'rgba(255,255,255,.05)',
+      '--dsw-alias-card-fill-hover': 'rgba(255,255,255,.10)',
+      '--dsw-alias-interactive-bg-hover': 'rgba(255,255,255,.07)',
+      '--dsw-alias-brand-primary': '#247bbf',
+      '--dsw-alias-link': '#67b6ea',
+    }
+
+    /** 如果文字色和实际背景的对比度太低，就用实际背景对应的那套 token */
+    function adaptSurfaceTokens(root) {
+      try {
+        if (!root || typeof getComputedStyle !== 'function') return
+        const bg = effectiveBackground(root)
+        const fg = parseColorToRgb(getComputedStyle(root).color) || { r: 0, g: 0, b: 0, a: 1 }
+        const l1 = relativeLuminance(bg)
+        const l2 = relativeLuminance(fg)
+        const ratio = (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05)
+        const surfaceIsLight = l1 > 0.5
+        root.setAttribute('data-sc-surface', surfaceIsLight ? 'light' : 'dark')
+        if (ratio < 3) {
+          const tokens = surfaceIsLight ? LIGHT_TOKENS : DARK_TOKENS
+          for (const k of Object.keys(tokens)) root.style.setProperty(k, tokens[k])
+        }
+      } catch (e) {
+        /* 取不到样式就算了，保持原样 */
+      }
+    }
+
     // ───────────────────────── 样式 ─────────────────────────
 
     const STYLE_ID = 'dsh-share-chat-style'
@@ -175,8 +259,9 @@ window.__ModuleLoader__.load({
 .sc-btn:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.10))}
 .sc-btn:active{transform:scale(.97)}
 .sc-btn:disabled{opacity:.42;cursor:default;transform:none}
-.sc-btn-primary{border-color:transparent;background:var(--dsw-alias-brand-primary,#247bbf);color:var(--dsw-alias-label-on-color,#fff)}
-.sc-btn-primary:hover{background:var(--dsw-alias-button-primary-hover,#1f6cab)}
+.sc-btn-primary{border-color:transparent;background:#247bbf;color:#fff}
+.sc-btn-primary:hover{background:#1f6cab}
+.sc-btn-primary:disabled{background:#2f5f86;color:rgba(255,255,255,.72)}
 .sc-btn-ghost{border-color:transparent}
 .sc-btn-ghost:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.10))}
 .sc-icon-btn{width:30px;padding:0;font-size:15px}
@@ -298,6 +383,65 @@ window.__ModuleLoader__.load({
 .sc-ok{font-size:11.5px;color:var(--dsw-alias-state-success-primary,#2f8f65)}
 .sc-hint{font-size:11px;color:var(--dsw-alias-label-tertiary,#8b949e)}
 
+.sc-camp{flex:1;min-height:0;overflow:auto;padding:16px 18px}
+.sc-camp-top{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+.sc-camp-grid{display:flex;flex-direction:column;gap:10px;max-width:880px;margin:0 auto}
+.sc-camp-card{display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.22));border-radius:14px;background:var(--dsw-alias-card-fill,rgba(128,128,128,.05));cursor:pointer;transition:background .15s,border-color .15s}
+.sc-camp-card:hover{background:var(--dsw-alias-card-fill-hover,rgba(128,128,128,.10));border-color:var(--dsw-alias-border-l3,rgba(128,128,128,.32))}
+.sc-camp-emoji{width:38px;height:38px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:19px;background:rgba(36,123,191,.18)}
+.sc-camp-info{flex:1;min-width:0}
+.sc-camp-name{font-size:13.5px;font-weight:600}
+.sc-camp-greet{font-size:12px;color:var(--dsw-alias-label-secondary,#5b6570);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sc-camp-meta{font-size:11px;color:var(--dsw-alias-label-tertiary,#8b949e)}
+.sc-camp-badge{display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:99px;font-size:10.5px;white-space:nowrap}
+.sc-badge-have{background:rgba(76,195,138,.16);color:#4cc38a}
+.sc-badge-new{background:rgba(36,123,191,.18);color:#67b6ea}
+.sc-badge-diff{background:rgba(240,180,80,.16);color:#e6b35c}
+.sc-badge-builtin{background:rgba(255,255,255,.08);color:var(--dsw-alias-label-tertiary,#8b949e)}
+.sc-camp-form{display:flex;flex-direction:column;gap:10px;max-width:520px;padding:16px;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.22));border-radius:14px;background:var(--dsw-alias-card-fill,rgba(128,128,128,.05))}
+.sc-camp-plugins{display:flex;flex-direction:column;gap:6px;margin-top:10px}
+.sc-camp-plug{display:flex;align-items:center;gap:8px;font-size:12px}
+.sc-camp-plug .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sc-char-svg{display:block;overflow:visible}
+.sc-scene{position:relative;height:200px;border-radius:14px;overflow:hidden;margin:0 0 14px;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.22));background:linear-gradient(180deg,#0d2a35 0%,#0a1a20 100%)}
+.sc-scene-floor{position:absolute;left:0;right:0;bottom:0;height:52px;background:linear-gradient(180deg,rgba(36,123,191,.20),rgba(36,123,191,.03));border-top:1px solid rgba(86,176,236,.28)}
+.sc-scene-actor{position:absolute;bottom:16px;display:flex;flex-direction:column;align-items:center;gap:2px}
+.sc-scene-bob{animation:sc-bob 2.4s ease-in-out infinite}
+.sc-scene-actor.walk{animation:sc-walk-in .95s ease-out both}
+.sc-scene-name{font-size:10px;line-height:1.6;padding:1px 7px;border-radius:99px;background:rgba(0,0,0,.45);color:#dfeef5;white-space:nowrap}
+.sc-scene-empty{position:absolute;left:50%;top:16px;transform:translateX(-50%);font-size:11.5px;color:rgba(223,238,245,.55)}
+@keyframes sc-bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-3px)}}
+@keyframes sc-walk-in{from{transform:translateX(-140px);opacity:0}to{transform:translateX(0);opacity:1}}
+.sc-char-btn{display:inline-flex;align-items:center;gap:8px;height:34px;padding:0 10px;border-radius:11px;border:1px solid var(--dsw-alias-border-l3,rgba(128,128,128,.3));background:transparent;color:inherit;font:inherit;font-size:12px;cursor:pointer}
+.sc-char-btn:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.1))}
+.sc-face-mask{position:fixed;inset:0;z-index:2147483645;display:flex;align-items:center;justify-content:center;background:rgba(4,10,14,.72);backdrop-filter:blur(6px)}
+.sc-face{width:min(1040px,94vw);height:min(720px,92vh);display:flex;flex-direction:column;border-radius:18px;overflow:hidden;
+  background:var(--dsw-alias-bg-base,#0e1116);color:var(--dsw-alias-label-primary,#e9f2f6);
+  border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.24));box-shadow:0 30px 80px rgba(0,0,0,.55)}
+.sc-face-head{display:flex;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.2));flex:0 0 auto;flex-wrap:wrap}
+.sc-face-title{font-size:14px;font-weight:600}
+.sc-face-body{flex:1;min-height:0;display:flex}
+.sc-face-left{width:340px;flex:0 0 auto;padding:16px;border-right:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.2));display:flex;flex-direction:column;align-items:center;gap:10px}
+.sc-face-stage{width:100%;height:330px;border-radius:14px;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.2));background:radial-gradient(120% 80% at 50% 0%,rgba(80,150,190,.20),rgba(10,20,26,.5));display:flex;align-items:center;justify-content:center;overflow:hidden}
+.sc-face-right{flex:1;min-width:0;display:flex;flex-direction:column}
+.sc-face-tabs{display:flex;gap:6px;padding:10px 14px;overflow-x:auto;border-bottom:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.2));flex:0 0 auto}
+.sc-face-tab{height:26px;padding:0 10px;border-radius:8px;border:1px solid transparent;background:transparent;color:var(--dsw-alias-label-secondary,#9fb3bd);font:inherit;font-size:12px;cursor:pointer;white-space:nowrap}
+.sc-face-tab.on{background:rgba(36,123,191,.18);border-color:rgba(86,176,236,.4);color:var(--dsw-alias-label-primary,#e9f2f6)}
+.sc-face-params{flex:1;min-height:0;overflow:auto;padding:14px 16px}
+.sc-face-row{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.sc-face-row .lab{width:70px;flex:0 0 auto;font-size:12px;color:var(--dsw-alias-label-secondary,#9fb3bd)}
+.sc-face-row input[type=range]{flex:1;accent-color:#247bbf;height:18px}
+.sc-face-row .num{width:44px;text-align:right;font-size:11.5px;font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-tertiary,#8b949e)}
+.sc-face-sw{margin-bottom:12px}
+.sc-face-sw .lab{display:block;font-size:12px;color:var(--dsw-alias-label-secondary,#9fb3bd);margin-bottom:6px}
+.sc-swatches{display:flex;gap:7px;flex-wrap:wrap}
+.sc-swatch{width:24px;height:24px;border-radius:50%;border:2px solid transparent;cursor:pointer;padding:0}
+.sc-swatch.on{border-color:#67b6ea;box-shadow:0 0 0 2px rgba(103,182,234,.25)}
+.sc-seg{display:flex;gap:6px;flex-wrap:wrap}
+.sc-seg button{height:26px;padding:0 10px;border-radius:8px;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.22));background:transparent;color:inherit;font:inherit;font-size:12px;cursor:pointer}
+.sc-seg button.on{background:rgba(36,123,191,.22);border-color:rgba(86,176,236,.45)}
+.sc-face-foot{display:flex;align-items:center;gap:8px;padding:10px 16px;border-top:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.2));flex:0 0 auto;flex-wrap:wrap}
+.sc-face-code{flex:1;min-width:160px;font-family:ui-monospace,Consolas,monospace;font-size:10.5px}
 @media (max-width: 720px){
   .sc-side{width:152px;flex-basis:152px}
   .sc-side-title{padding:10px 10px 4px}
@@ -330,24 +474,9 @@ window.__ModuleLoader__.load({
       return x
     }
 
-    /** 当前 relay 地址，头像 URL 要拼它（插件页面和 relay 不同源） */
-    let avatarBase = ''
-
-    function avatar(name, id, size, avatarId, isGroup) {
+    function avatar(name, id, size) {
       const sz = size || 30
-      if (avatarId) {
-        return h('img', {
-          className: 'sc-avatar',
-          src: avatarBase + '/f/' + avatarId,
-          alt: String(name || id || ''),
-          loading: 'lazy',
-          style: { width: sz + 'px', height: sz + 'px', objectFit: 'cover', display: 'block' },
-        })
-      }
       const hue = hueOf(id || name)
-      const initial = isGroup
-        ? '👥'
-        : String(name || id || '?').trim().charAt(0).toUpperCase()
       return h(
         'span',
         {
@@ -364,7 +493,7 @@ window.__ModuleLoader__.load({
               ' 58% 44%))',
           },
         },
-        initial,
+        String(name || id || '?').trim().charAt(0).toUpperCase(),
       )
     }
 
@@ -627,9 +756,7 @@ window.__ModuleLoader__.load({
 
     function ChatPanel(props) {
       const auth = props.auth
-      avatarBase = auth.server
       const [friends, setFriends] = useState([])
-      const [groups, setGroups] = useState([])
       const [active, setActive] = useState(null)
       const [messages, setMessages] = useState([])
       const [draft, setDraft] = useState('')
@@ -638,7 +765,7 @@ window.__ModuleLoader__.load({
       const [sending, setSending] = useState(false)
       const [uploading, setUploading] = useState(false)
       const [emojiOpen, setEmojiOpen] = useState(false)
-      const [myAvatar, setMyAvatar] = useState('')
+      const [campMode, setCampMode] = useState(false)
 
       const cursorRef = useRef(0)
       const listRef = useRef(null)
@@ -654,7 +781,6 @@ window.__ModuleLoader__.load({
         try {
           const r = await api(auth.server, '/api/friends', { token: auth.token })
           setFriends(r.friends || [])
-          setGroups(r.groups || [])
           return r.friends || []
         } catch (e) {
           setErr(friendly(e))
@@ -667,11 +793,6 @@ window.__ModuleLoader__.load({
         loadFriends().then((list) => {
           if (alive && list.length && !active) setActive(list[0].id)
         })
-        api(auth.server, '/api/me', { token: auth.token })
-          .then((me) => {
-            if (alive && me && me.avatar) setMyAvatar(me.avatar)
-          })
-          .catch(() => {})
         return () => {
           alive = false
         }
@@ -709,17 +830,10 @@ window.__ModuleLoader__.load({
             const f = await api(auth.server, '/api/friends', { token: auth.token })
             if (!alive) return
             const list = f.friends || []
-            const glist = f.groups || []
-            const key =
-              list.map((x) => x.id + ':' + (x.displayName || '') + ':' + (x.avatar || '')).join('|') +
-              '§' +
-              glist
-                .map((g) => g.id + ':' + g.name + ':' + (g.avatar || '') + ':' + (g.members || []).length)
-                .join('|')
+            const key = list.map((x) => x.id + ':' + (x.displayName || '')).join('|')
             if (key !== friendsKeyRef.current) {
               friendsKeyRef.current = key
               setFriends(list)
-              setGroups(glist)
               if (!activeRef.current && list.length) setActive(list[0].id)
             }
           } catch (e) {
@@ -826,89 +940,6 @@ window.__ModuleLoader__.load({
       }
 
       /* 好友列表里的「最后一条」摘要 */
-      /** 建群 / 拉人 / 换自己的头像 */
-      const createGroup = async () => {
-        let name = ''
-        try {
-          name = (window.prompt('群名？') || '').trim()
-        } catch (e) {
-          name = ''
-        }
-        if (!name) return
-        setErr('')
-        try {
-          const r = await api(auth.server, '/api/groups', {
-            method: 'POST',
-            token: auth.token,
-            body: { name },
-          })
-          await loadFriends()
-          setActive('g:' + r.group.id)
-          cursorRef.current = 0
-          setMessages([])
-        } catch (e) {
-          setErr(friendly(e))
-        }
-      }
-
-      const addMember = async () => {
-        if (!active || active.indexOf('g:') !== 0) return
-        let id = ''
-        try {
-          id = (window.prompt('把谁的 ID 拉进群？') || '').trim()
-        } catch (e) {
-          id = ''
-        }
-        if (!id) return
-        setErr('')
-        try {
-          await api(auth.server, '/api/groups/' + active.slice(2) + '/members', {
-            method: 'POST',
-            token: auth.token,
-            body: { id },
-          })
-          await loadFriends()
-        } catch (e) {
-          setErr(friendly(e))
-        }
-      }
-
-      const avatarInputRef = useRef(null)
-      const uploadAvatar = async (file) => {
-        if (!file) return
-        setErr('')
-        try {
-          const buf = await file.arrayBuffer()
-          const res = await fetch(auth.server + '/api/upload', {
-            method: 'POST',
-            headers: {
-              authorization: 'Bearer ' + auth.token,
-              'content-type': file.type || 'application/octet-stream',
-              'x-filename': encodeURIComponent(file.name || ''),
-            },
-            body: buf,
-          })
-          let up = null
-          try {
-            up = await res.json()
-          } catch {
-            up = null
-          }
-          if (!res.ok || !up) {
-            setErr('头像上传失败')
-            return
-          }
-          await api(auth.server, '/api/avatar', {
-            method: 'POST',
-            token: auth.token,
-            body: { uploadId: up.id },
-          })
-          setMyAvatar(up.id)
-        } catch (e) {
-          setErr(friendly(e))
-        }
-      }
-
       const lastOf = (fid) => {
         for (let i = messages.length - 1; i >= 0; i--) {
           const m = messages[i]
@@ -925,32 +956,6 @@ window.__ModuleLoader__.load({
         return String(b.text || '')
       }
 
-      /** 会话 = 好友 + 群，统一成一种形状给侧栏和标题用 */
-      const convs = [
-        ...friends.map((f) => ({
-          kind: 'dm',
-          key: f.id,
-          title: f.displayName || f.id,
-          avatar: f.avatar || '',
-          members: [],
-        })),
-        ...groups.map((g) => ({
-          kind: 'group',
-          key: 'g:' + g.id,
-          title: g.name,
-          avatar: g.avatar || '',
-          members: g.members || [],
-        })),
-      ]
-      const current = convs.find((c) => c.key === active) || null
-      const isGroup = !!(current && current.kind === 'group')
-      const nameOf = (id) => {
-        const mem = current && (current.members || []).find((x) => x.id === id)
-        if (mem) return mem.displayName || id
-        const dm = convs.find((c) => c.kind === 'dm' && c.key === id)
-        return dm ? dm.title : id
-      }
-
       const thread = messages.filter((m) => m.from === active || m.to === active)
 
       const renderMessage = (m) => {
@@ -961,21 +966,16 @@ window.__ModuleLoader__.load({
         if (kind === 'snapshot') {
           content = h(SnapshotCard, { snapshotId: b.snapshotId, auth })
         } else if (kind === 'image') {
-          const src = auth.server + b.url
-          content = h(
-            'a',
-            { href: src + '?download=1', target: '_blank', rel: 'noreferrer', title: '点开保存' },
-            h('img', { className: 'sc-msg-img', src, alt: b.caption || '图片' }),
-          )
+          content = h('img', {
+            className: 'sc-msg-img',
+            src: auth.server + b.url,
+            alt: b.caption || '图片',
+          })
         } else if (kind === 'file') {
           const t = String(b.type || '')
           const src = auth.server + b.url
           if (t.startsWith('image/')) {
-            content = h(
-              'a',
-              { href: src + '?download=1', target: '_blank', rel: 'noreferrer', title: '点开保存' },
-              h('img', { className: 'sc-msg-img', src, alt: b.name || '图片' }),
-            )
+            content = h('img', { className: 'sc-msg-img', src, alt: b.name || '图片' })
           } else if (t.startsWith('video/')) {
             content = h('video', { src, controls: true, style: MEDIA_STYLE })
           } else if (t.startsWith('audio/')) {
@@ -985,7 +985,7 @@ window.__ModuleLoader__.load({
               'a',
               {
                 className: 'sc-file',
-                href: src + '?download=1',
+                href: src,
                 target: '_blank',
                 rel: 'noreferrer',
                 download: b.name || undefined,
@@ -995,11 +995,7 @@ window.__ModuleLoader__.load({
                 'span',
                 { className: 'sc-file-main' },
                 h('span', { className: 'sc-file-name' }, b.name || '附件'),
-                h(
-                  'span',
-                  { className: 'sc-file-size' },
-                  (b.type || '未知类型') + ' · ' + kbText(b.size) + ' · 点击下载',
-                ),
+                h('span', { className: 'sc-file-size' }, (b.type || '未知类型') + ' · ' + kbText(b.size)),
               ),
             )
           }
@@ -1009,9 +1005,6 @@ window.__ModuleLoader__.load({
         return h(
           'div',
           { key: m.seq, className: 'sc-msg' + (mine ? ' mine' : '') },
-          isGroup && !mine
-            ? h('div', { className: 'sc-time', style: { marginBottom: '2px' } }, nameOf(m.from))
-            : null,
           content,
           h('div', { className: 'sc-time' }, clockText(m.at)),
         )
@@ -1024,31 +1017,11 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { className: 'sc-chat-head' },
-          avatar(auth.displayName || auth.id, auth.id, 30, myAvatar, false),
-          h('input', {
-            ref: avatarInputRef,
-            type: 'file',
-            accept: 'image/*',
-            style: { display: 'none' },
-            onChange: (e) => {
-              const f = e.target.files && e.target.files[0]
-              if (f) uploadAvatar(f)
-              e.target.value = ''
-            },
-          }),
+          h(Character, { id: auth.id, ch: readMyCharacter(), size: 30 }),
           h(
             'div',
             { style: { minWidth: 0 } },
-            h(
-              'div',
-              {
-                className: 'sc-chat-name',
-                style: { cursor: 'pointer' },
-                title: '点一下换我的头像',
-                onClick: () => avatarInputRef.current && avatarInputRef.current.click(),
-              },
-              '@' + (auth.displayName || auth.id),
-            ),
+            h('div', { className: 'sc-chat-name' }, '@' + (auth.displayName || auth.id)),
             h('div', { className: 'sc-chat-sub' }, auth.server.replace(/^https?:\/\//, '')),
           ),
           h('span', { className: 'sc-grow' }),
@@ -1065,6 +1038,15 @@ window.__ModuleLoader__.load({
           h(
             'button',
             {
+              className: 'sc-btn' + (campMode ? ' sc-btn-primary' : ''),
+              onClick: () => setCampMode((v) => !v),
+              title: '串门：看看好友的营地',
+            },
+            campMode ? '💬 会话' : '🏕 串门',
+          ),
+          h(
+            'button',
+            {
               className: 'sc-btn',
               onClick: () => openMeeting({ auth, onToast: (m) => setErr(m) }),
               title: '音视频会议（点对点，无时长限制）',
@@ -1075,13 +1057,15 @@ window.__ModuleLoader__.load({
           h('button', { className: 'sc-btn sc-btn-ghost', onClick: props.onLogout }, '退出'),
         ),
         /* 主体 */
-        h(
+        campMode
+          ? h(CampPanel, { auth })
+          : h(
           'div',
           { className: 'sc-chat-body' },
           h(
             'div',
             { className: 'sc-side' },
-            h('div', { className: 'sc-side-title' }, '会话'),
+            h('div', { className: 'sc-side-title' }, '好友'),
             h(
               'div',
               { className: 'sc-add' },
@@ -1095,40 +1079,27 @@ window.__ModuleLoader__.load({
                 },
               }),
               h('button', { className: 'sc-btn sc-btn-sm', onClick: addFriend }, '添加'),
-              h('button', { className: 'sc-btn sc-btn-sm', onClick: createGroup, title: '建一个群' }, '建群'),
             ),
             h(
               'div',
               { className: 'sc-friends' },
-              convs.length === 0
-                ? emptyState('👥', '还没有会话', '在上面加好友，或者点「建群」')
-                : convs.map((c) =>
+              friends.length === 0
+                ? emptyState('👥', '还没有好友', '在上面输入对方 ID 加一个')
+                : friends.map((f) =>
                     h(
                       'div',
                       {
-                        key: c.key,
-                        className: 'sc-friend' + (active === c.key ? ' on' : ''),
-                        onClick: () => {
-                          setActive(c.key)
-                          cursorRef.current = 0
-                          setMessages([])
-                        },
-                        title: c.key,
+                        key: f.id,
+                        className: 'sc-friend' + (active === f.id ? ' on' : ''),
+                        onClick: () => setActive(f.id),
+                        title: f.id,
                       },
-                      avatar(c.title, c.key, 28, c.avatar, c.kind === 'group'),
+                      h(Character, { id: f.id, size: 30 }),
                       h(
                         'div',
                         { className: 'sc-friend-main' },
-                        h(
-                          'div',
-                          { className: 'sc-friend-name' },
-                          c.title + (c.kind === 'group' ? '  (' + c.members.length + ')' : ''),
-                        ),
-                        h(
-                          'div',
-                          { className: 'sc-friend-last' },
-                          previewOf(lastOf(c.key)) || '还没有消息',
-                        ),
+                        h('div', { className: 'sc-friend-name' }, f.displayName || f.id),
+                        h('div', { className: 'sc-friend-last' }, previewOf(lastOf(f.id)) || '还没有消息'),
                       ),
                     ),
                   ),
@@ -1137,33 +1108,6 @@ window.__ModuleLoader__.load({
           h(
             'div',
             { className: 'sc-main' },
-            current
-              ? h(
-                  'div',
-                  {
-                    className: 'sc-side-title',
-                    style: {
-                      padding: '10px 14px 4px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                    },
-                  },
-                  h(
-                    'span',
-                    null,
-                    current.title + (isGroup ? '  ·  ' + current.members.length + ' 人' : ''),
-                  ),
-                  h('span', { className: 'sc-grow' }),
-                  isGroup
-                    ? h(
-                        'button',
-                        { className: 'sc-btn sc-btn-sm', onClick: addMember, title: '拉人进群' },
-                        '＋人',
-                      )
-                    : null,
-                )
-              : null,
             h(
               'div',
               { className: 'sc-thread', ref: listRef },
@@ -1570,6 +1514,2020 @@ window.__ModuleLoader__.load({
           h('div', { className: 'sc-hint', style: { marginTop: '8px' } }, '最小 300×420；超过页面窗口会自动收进可视范围。'),
         ),
       )
+    }
+
+    // ───────────────────────── 串门（营地 P1：只读） ─────────────────────────
+
+    // ───────────────────────── 3D 渲染引擎（WebGL，无依赖） ─────────────────────────
+
+    /**
+     * 迷你 3D：球面头部按参数变形 + 平面投影脸部贴图 + 卡通分层光照 + 反向外扩描边。
+     * 只画到编辑器的大画布里；小头像仍走 SVG，避免几十个 WebGL 上下文。
+     */
+    function createFace3D(canvas, getFace, getAngle) {
+      const gl = canvas.getContext('webgl', { antialias: true, alpha: true, premultipliedAlpha: false })
+      if (!gl) return null
+
+      const K = 0.62, Y0 = 0.02, TEX = 1024
+      const px = (x) => (0.5 + x * K) * TEX
+      const py = (y) => (0.5 - (y - Y0) * K) * TEX
+      const ps = (v) => v * K * TEX
+
+      const mat4 = {
+        perspective(fovy, aspect, near, far) {
+          const f = 1 / Math.tan(fovy / 2), nf = 1 / (near - far)
+          return [f / aspect,0,0,0, 0,f,0,0, 0,0,(far + near) * nf,-1, 0,0,2 * far * near * nf,0]
+        },
+        lookAt(eye, target, up) {
+          const sub = (a, b) => [a[0]-b[0], a[1]-b[1], a[2]-b[2]]
+          const dot = (a, b) => a[0]*b[0]+a[1]*b[1]+a[2]*b[2]
+          const cross = (a, b) => [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]
+          const norm = (v) => { const l = Math.hypot(v[0],v[1],v[2]) || 1; return [v[0]/l, v[1]/l, v[2]/l] }
+          const z = norm(sub(eye, target)), x = norm(cross(up, z)), y = cross(z, x)
+          return [x[0],y[0],z[0],0, x[1],y[1],z[1],0, x[2],y[2],z[2],0, -dot(x,eye), -dot(y,eye), -dot(z,eye), 1]
+        },
+        rotY(a) { const c = Math.cos(a), s = Math.sin(a); return [c,0,-s,0, 0,1,0,0, s,0,c,0, 0,0,0,1] },
+        mul(a, b) {
+          const o = new Array(16)
+          for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) {
+            let v = 0
+            for (let k = 0; k < 4; k++) v += a[k * 4 + j] * b[i * 4 + k]
+            o[i * 4 + j] = v
+          }
+          return o
+        },
+      }
+
+      function compile(type, src) {
+        const sh = gl.createShader(type)
+        gl.shaderSource(sh, src); gl.compileShader(sh)
+        if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(sh))
+        return sh
+      }
+      function program(vs, fs) {
+        const p = gl.createProgram()
+        gl.attachShader(p, compile(gl.VERTEX_SHADER, vs))
+        gl.attachShader(p, compile(gl.FRAGMENT_SHADER, fs))
+        gl.linkProgram(p)
+        if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p))
+        return p
+      }
+
+      const TOON_VS = [
+        'attribute vec3 aPos; attribute vec3 aNormal; attribute vec2 aUV;',
+        'uniform mat4 uMVP; uniform mat4 uModel;',
+        'varying vec3 vN; varying vec2 vUV;',
+        'void main(){ vN = normalize(mat3(uModel) * aNormal); vUV = aUV; gl_Position = uMVP * vec4(aPos,1.0); }',
+      ].join('\n')
+      const TOON_FS = [
+        'precision mediump float;',
+        'varying vec3 vN; varying vec2 vUV;',
+        'uniform vec3 uColor; uniform vec3 uRim; uniform vec3 uLight;',
+        'uniform sampler2D uTex; uniform float uUseTex;',
+        'void main(){',
+        '  vec3 n = normalize(vN); vec3 l = normalize(uLight);',
+        '  float d = dot(n, l);',
+        '  float band = d > 0.55 ? 1.0 : (d > 0.05 ? 0.8 : (d > -0.35 ? 0.62 : 0.48));',
+        '  vec3 v = normalize(vec3(0.0,0.15,1.0));',
+        '  float rim = pow(1.0 - max(dot(n, v), 0.0), 2.2);',
+        '  vec4 tex = texture2D(uTex, vUV);',
+        '  vec3 base = mix(uColor, tex.rgb, tex.a * uUseTex);',
+        '  gl_FragColor = vec4(base * band + uRim * rim * 0.5, 1.0);',
+        '}',
+      ].join('\n')
+      const OUT_VS = [
+        'attribute vec3 aPos; attribute vec3 aNormal;',
+        'uniform mat4 uMVP; uniform float uThick;',
+        'void main(){ gl_Position = uMVP * vec4(aPos + aNormal * uThick, 1.0); }',
+      ].join('\n')
+      const OUT_FS = 'precision mediump float; uniform vec3 uColor; void main(){ gl_FragColor = vec4(uColor,1.0); }'
+
+      let progToon, progOut
+      try {
+        progToon = program(TOON_VS, TOON_FS)
+        progOut = program(OUT_VS, OUT_FS)
+      } catch (e) {
+        return null
+      }
+      const lt = (p, n) => gl.getUniformLocation(p, n)
+      const at = (p, n) => gl.getAttribLocation(p, n)
+
+      function sphere(seg, rings) {
+        const pos = [], nrm = [], uv = [], idx = []
+        for (let y = 0; y <= rings; y++) {
+          const v = y / rings, phi = v * Math.PI
+          for (let x = 0; x <= seg; x++) {
+            const u = x / seg, th = u * Math.PI * 2
+            const sx = Math.sin(phi) * Math.sin(th), sy = Math.cos(phi), sz = Math.sin(phi) * Math.cos(th)
+            pos.push(sx, sy, sz); nrm.push(sx, sy, sz); uv.push(0.5 + sx * K, 0.5 - (sy - Y0) * K)
+          }
+        }
+        for (let yy = 0; yy < rings; yy++) for (let xx = 0; xx < seg; xx++) {
+          const a = yy * (seg + 1) + xx, b = a + 1, c = a + seg + 1, d = c + 1
+          idx.push(a, c, b, b, c, d)
+        }
+        return { pos, nrm, uv, idx }
+      }
+
+      function vbo(mesh) {
+        const o = {}
+        o.pos = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, o.pos); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(mesh.pos), gl.STATIC_DRAW)
+        o.nrm = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, o.nrm); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(mesh.nrm), gl.STATIC_DRAW)
+        o.uvb = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, o.uvb); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(mesh.uv), gl.STATIC_DRAW)
+        o.idx = gl.createBuffer(); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, o.idx); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(mesh.idx), gl.STATIC_DRAW)
+        o.count = mesh.idx.length
+        return o
+      }
+
+      function buildHead(f) {
+        const m = sphere(64, 40)
+        for (let i = 0; i < m.pos.length; i += 3) {
+          let x = m.pos[i], y = m.pos[i + 1], z = m.pos[i + 2]
+          const sx = 1 + f.faceWidth * 0.0016
+          const jaw = 1 - f.jaw * 0.0022 * (y < 0 ? -y : 0)
+          const chin = 1 + f.chin * 0.0012 * (y < -0.3 ? 1 : 0)
+          const fore = 1 + f.forehead * 0.0012 * (y > 0.4 ? 1 : 0)
+          const cheek = 1 + f.cheek * 0.0012 * (Math.abs(y) < 0.35 ? 1 : 0)
+          x *= sx * jaw * cheek
+          z *= sx * jaw * cheek * (1 + f.noseLength * 0.0008 * (z > 0.75 ? 1 : 0))
+          y *= chin * fore
+          if (y > 0.78) y = 0.78 + (y - 0.78) * 0.8
+          m.pos[i] = x; m.pos[i + 1] = y; m.pos[i + 2] = z
+          const l = Math.hypot(x, y, z) || 1
+          m.nrm[i] = x / l; m.nrm[i + 1] = y / l; m.nrm[i + 2] = z / l
+          m.uv[i / 3 * 2] = 0.5 + x * K
+          m.uv[i / 3 * 2 + 1] = 0.5 - (y - Y0) * K
+        }
+        return m
+      }
+
+      function buildHair() {
+        const m = sphere(56, 36)
+        const keep = new Uint8Array(m.pos.length / 3)
+        for (let i = 0; i < m.pos.length; i += 3) {
+          const x = m.pos[i], y = m.pos[i + 1], z = m.pos[i + 2]
+          const r = 1.09 + Math.max(0, -y) * 0.05
+          m.pos[i] = x * r; m.pos[i + 1] = y * r; m.pos[i + 2] = z * r
+          const l = Math.hypot(m.pos[i], m.pos[i + 1], m.pos[i + 2]) || 1
+          m.nrm[i] = m.pos[i] / l; m.nrm[i + 1] = m.pos[i + 1] / l; m.nrm[i + 2] = m.pos[i + 2] / l
+          const front = z > 0.15
+          const hairline = front ? 0.24 + 0.07 * Math.cos(x * 9) - Math.abs(x) * 0.06 : 0.02
+          keep[i / 3] = y > hairline || z < -0.25 ? 1 : 0
+        }
+        const idx = []
+        for (let k = 0; k < m.idx.length; k += 3) {
+          const a = m.idx[k], b = m.idx[k + 1], c = m.idx[k + 2]
+          if (keep[a] && keep[b] && keep[c]) idx.push(a, b, c)
+        }
+        m.idx = idx
+        return m
+      }
+
+      function buildFringe() {
+        const m = sphere(96, 32)
+        const keep = new Uint8Array(m.pos.length / 3)
+        for (let i = 0; i < m.pos.length; i += 3) {
+          const x = m.pos[i], y = m.pos[i + 1], z = m.pos[i + 2]
+          const r = 1.13
+          m.pos[i] = x * r; m.pos[i + 1] = y * r; m.pos[i + 2] = z * r
+          const l = Math.hypot(m.pos[i], m.pos[i + 1], m.pos[i + 2]) || 1
+          m.nrm[i] = m.pos[i] / l; m.nrm[i + 1] = m.pos[i + 1] / l; m.nrm[i + 2] = m.pos[i + 2] / l
+          const ang = Math.atan2(x, z)
+          const strand = Math.sin(ang * 7 + 0.6)
+          keep[i / 3] = z > 0.28 && y < 0.62 && y > 0.16 + Math.abs(x) * 0.04 && strand > -0.2 ? 1 : 0
+        }
+        const idx = []
+        for (let k = 0; k < m.idx.length; k += 3) {
+          const a = m.idx[k], b = m.idx[k + 1], c = m.idx[k + 2]
+          if (keep[a] && keep[b] && keep[c]) idx.push(a, b, c)
+        }
+        m.idx = idx
+        return m
+      }
+
+      function buildPart(scaleX, scaleY, scaleZ, dy, sx, sy) {
+        const m = sphere(sx || 24, sy || 18)
+        for (let i = 0; i < m.pos.length; i += 3) {
+          m.pos[i] *= scaleX
+          m.pos[i + 1] = m.pos[i + 1] * scaleY + dy
+          m.pos[i + 2] *= scaleZ
+          const l = Math.hypot(m.pos[i] / scaleX, (m.pos[i + 1] - dy) / scaleY, m.pos[i + 2] / scaleZ) || 1
+          m.nrm[i] = m.pos[i] / scaleX / l
+          m.nrm[i + 1] = (m.pos[i + 1] - dy) / scaleY / l
+          m.nrm[i + 2] = m.pos[i + 2] / scaleZ / l
+        }
+        return m
+      }
+
+      function sideLock(side) {
+        const m = sphere(16, 20)
+        for (let i = 0; i < m.pos.length; i += 3) {
+          m.pos[i] = m.pos[i] * 0.1 + side * 0.84
+          m.pos[i + 1] = m.pos[i + 1] * 0.62 - 0.1
+          m.pos[i + 2] = m.pos[i + 2] * 0.12 + 0.42
+          const l = Math.hypot((m.pos[i] - side * 0.84) / 0.1, (m.pos[i + 1] + 0.1) / 0.62, (m.pos[i + 2] - 0.42) / 0.12) || 1
+          m.nrm[i] = (m.pos[i] - side * 0.84) / 0.1 / l
+          m.nrm[i + 1] = (m.pos[i + 1] + 0.1) / 0.62 / l
+          m.nrm[i + 2] = (m.pos[i + 2] - 0.42) / 0.12 / l
+        }
+        return m
+      }
+
+      function faceTexture(f) {
+        const c = document.createElement('canvas')
+        c.width = TEX; c.height = TEX
+        const g = c.getContext('2d')
+        const hairHex = C_HAIR[f.hairColor % C_HAIR.length]
+        const skinHex = F_SKIN[f.skinTone]
+        const eyeY = 0 + f.eyeHeight * 0.0006
+        const eyeX = 0.24 + f.eyeSpacing * 0.0011
+        const erx = 0.115 * (1 + f.eyeSize * 0.005)
+        const ery = 0.14 * (1 + f.eyeSize * 0.005)
+        const tilt = f.eyeTilt * 0.0018
+
+        const bA = Math.min(1, Math.max(0, f.blush / 100)) * 0.45
+        if (bA > 0.01) {
+          ;[-1, 1].forEach((sd) => {
+            const cx = px(sd * (eyeX + erx * 0.35)), cy = py(eyeY - 0.22), rad = ps(erx * 1.5)
+            const grd = g.createRadialGradient(cx, cy, 2, cx, cy, rad)
+            grd.addColorStop(0, 'rgba(255,140,155,' + bA + ')')
+            grd.addColorStop(1, 'rgba(255,140,155,0)')
+            g.fillStyle = grd
+            g.beginPath(); g.arc(cx, cy, rad, 0, 7); g.fill()
+          })
+        }
+        ;[-1, 1].forEach((sd) => {
+          g.save()
+          g.translate(px(sd * eyeX), py(eyeY))
+          g.rotate(sd * tilt)
+          const rx = ps(erx), ry = ps(ery)
+          g.beginPath(); g.ellipse(0, 0, rx, ry, 0, 0, 7); g.fillStyle = '#fbfdff'; g.fill()
+          const cg = g.createRadialGradient(-rx * 0.2, -ry * 0.28, rx * 0.1, 0, 0, rx * 1.05)
+          cg.addColorStop(0, '#8fb6ff'); cg.addColorStop(0.55, '#4a63b0'); cg.addColorStop(1, '#2b3a72')
+          g.beginPath(); g.ellipse(0, ry * 0.06, rx * 0.68, ry * 0.72, 0, 0, 7); g.fillStyle = cg; g.fill()
+          g.beginPath(); g.ellipse(0, ry * 0.08, rx * 0.34, ry * 0.4, 0, 0, 7); g.fillStyle = '#151a2c'; g.fill()
+          g.beginPath(); g.ellipse(-rx * 0.3, -ry * 0.34, rx * 0.22, ry * 0.18, 0, 0, 7); g.fillStyle = '#ffffff'; g.fill()
+          g.beginPath(); g.arc(rx * 0.3, ry * 0.36, rx * 0.12, 0, 7); g.fillStyle = 'rgba(255,255,255,.92)'; g.fill()
+          g.beginPath(); g.ellipse(0, 0, rx * 1.02, ry * 1.02, 0, Math.PI * 0.92, Math.PI * 2.08)
+          g.strokeStyle = '#232946'; g.lineWidth = rx * 0.3; g.lineCap = 'round'; g.stroke()
+          g.restore()
+        })
+        g.strokeStyle = hairHex
+        g.lineWidth = ps(0.022); g.lineCap = 'round'
+        ;[-1, 1].forEach((sd) => {
+          g.beginPath()
+          g.moveTo(px(sd * (eyeX + erx * 1.15)), py(eyeY + 0.2))
+          g.quadraticCurveTo(px(sd * eyeX), py(eyeY + 0.26 + f.browArch * 0.0008), px(sd * (eyeX - erx * 1.05)), py(eyeY + 0.19))
+          g.stroke()
+        })
+        g.fillStyle = 'rgba(150,95,80,.45)'
+        g.beginPath(); g.ellipse(px(0), py(-0.16), ps(0.012), ps(0.009), 0, 0, 7); g.fill()
+        const smile = f.mouthSmile * 0.0016
+        g.strokeStyle = '#b8564f'; g.lineWidth = ps(0.02); g.lineCap = 'round'
+        g.beginPath()
+        g.moveTo(px(-0.08), py(-0.3))
+        g.quadraticCurveTo(px(0), py(-0.3 - 0.05 - smile), px(0.08), py(-0.3))
+        g.stroke()
+
+        const t = gl.createTexture()
+        gl.bindTexture(gl.TEXTURE_2D, t)
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false)
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, c)
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+        return t
+      }
+
+      let meshes = null
+      let tex = null
+      let sig = ''
+
+      function rebuild(f) {
+        const next = JSON.stringify([f.faceWidth, f.jaw, f.cheek, f.chin, f.forehead, f.noseLength, f.eyeSize, f.eyeSpacing, f.eyeTilt, f.eyeHeight, f.mouthSmile, f.blush, f.hairColor, f.skinTone, f.browArch])
+        if (next === sig && meshes) return
+        sig = next
+        if (meshes) {
+          for (const k of Object.keys(meshes)) {
+            const m = meshes[k]
+            if (m && m.pos) { gl.deleteBuffer(m.pos); gl.deleteBuffer(m.nrm); gl.deleteBuffer(m.uvb); gl.deleteBuffer(m.idx) }
+          }
+        }
+        meshes = {
+          head: vbo(buildHead(f)),
+          hair: vbo(buildHair(f)),
+          fringe: vbo(buildFringe(f)),
+          body: vbo(buildPart(1.12, 0.58, 0.78, -1.36)),
+          neck: vbo(buildPart(0.26, 0.42, 0.26, -1.06)),
+          lockL: vbo(sideLock(-1)),
+          lockR: vbo(sideLock(1)),
+        }
+        if (tex) gl.deleteTexture(tex)
+        tex = faceTexture(f)
+      }
+
+      function drawMesh(m, prog, attrs) {
+        gl.bindBuffer(gl.ARRAY_BUFFER, m.pos); gl.enableVertexAttribArray(attrs.pos); gl.vertexAttribPointer(attrs.pos, 3, gl.FLOAT, false, 0, 0)
+        gl.bindBuffer(gl.ARRAY_BUFFER, m.nrm); gl.enableVertexAttribArray(attrs.nrm); gl.vertexAttribPointer(attrs.nrm, 3, gl.FLOAT, false, 0, 0)
+        if (attrs.uv >= 0) {
+          gl.bindBuffer(gl.ARRAY_BUFFER, m.uvb); gl.enableVertexAttribArray(attrs.uv); gl.vertexAttribPointer(attrs.uv, 2, gl.FLOAT, false, 0, 0)
+        }
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, m.idx)
+        gl.drawElements(gl.TRIANGLES, m.count, gl.UNSIGNED_SHORT, 0)
+      }
+
+      const A = {
+        pos: at(progToon, 'aPos'), nrm: at(progToon, 'aNormal'), uv: at(progToon, 'aUV'),
+        mvp: lt(progToon, 'uMVP'), model: lt(progToon, 'uModel'), color: lt(progToon, 'uColor'),
+        rim: lt(progToon, 'uRim'), light: lt(progToon, 'uLight'), tex: lt(progToon, 'uTex'), useTex: lt(progToon, 'uUseTex'),
+      }
+      const O = {
+        pos: at(progOut, 'aPos'), nrm: at(progOut, 'aNormal'), mvp: lt(progOut, 'uMVP'), thick: lt(progOut, 'uThick'), color: lt(progOut, 'uColor'),
+      }
+
+      function render() {
+        const f = getFace()
+        rebuild(f)
+        const w = canvas.width, h = canvas.height
+        gl.viewport(0, 0, w, h)
+        gl.clearColor(0, 0, 0, 0)
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+        gl.enable(gl.DEPTH_TEST)
+        gl.enable(gl.CULL_FACE)
+
+        const proj = mat4.perspective(Math.PI / 5, w / h, 0.1, 100)
+        const view = mat4.lookAt([0, 0.2, 5.2], [0, -0.5, 0], [0, 1, 0])
+        const model = mat4.rotY(((getAngle() || 0) * Math.PI) / 180)
+        const mvp = mat4.mul(proj, mat4.mul(view, model))
+
+        gl.cullFace(gl.FRONT)
+        gl.useProgram(progOut)
+        gl.uniformMatrix4fv(O.mvp, false, new Float32Array(mvp))
+        gl.uniform3fv(O.color, new Float32Array([0.13, 0.16, 0.27]))
+        ;[[meshes.hair, 0.032], [meshes.fringe, 0.016], [meshes.lockL, 0.02], [meshes.lockR, 0.02], [meshes.body, 0.024], [meshes.neck, 0.02], [meshes.head, 0.016]].forEach((pair) => {
+          gl.uniformMatrix4fv(O.mvp, false, new Float32Array(mvp))
+          gl.uniform1f(O.thick, pair[1])
+          drawMesh(pair[0], progOut, O)
+        })
+
+        gl.cullFace(gl.BACK)
+        gl.useProgram(progToon)
+        gl.uniformMatrix4fv(A.mvp, false, new Float32Array(mvp))
+        gl.uniformMatrix4fv(A.model, false, new Float32Array(model))
+        gl.uniform3fv(A.light, new Float32Array([-0.35, 0.55, 0.78]))
+        gl.uniform3fv(A.rim, new Float32Array([0.42, 0.62, 0.95]))
+        gl.activeTexture(gl.TEXTURE0)
+        gl.bindTexture(gl.TEXTURE_2D, tex)
+        gl.uniform1i(A.tex, 0)
+
+        const drawPart = (mesh, color, useTex) => {
+          gl.uniform3fv(A.color, new Float32Array(color))
+          gl.uniform1f(A.useTex, useTex ? 1 : 0)
+          drawMesh(mesh, progToon, A)
+        }
+        drawPart(meshes.body, [0.17, 0.22, 0.38], false)
+        drawPart(meshes.neck, [0.99, 0.83, 0.73], false)
+        drawPart(meshes.head, [1.0, 0.86, 0.77], true)
+        drawPart(meshes.hair, [0.26, 0.32, 0.6], false)
+        drawPart(meshes.fringe, [0.23, 0.28, 0.54], false)
+        drawPart(meshes.lockL, [0.23, 0.28, 0.54], false)
+        drawPart(meshes.lockR, [0.23, 0.28, 0.54], false)
+      }
+
+      let raf = 0
+      let disposed = false
+      function loop() {
+        if (disposed) return
+        try { render() } catch (e) { /* 单帧失败不致命 */ }
+        raf = requestAnimationFrame(loop)
+      }
+      loop()
+
+      return {
+        dispose() {
+          disposed = true
+          if (raf) cancelAnimationFrame(raf)
+        },
+      }
+    }
+
+    /** 全屏捏脸编辑器 */
+    function FaceEditor(props) {
+      const [draft, setDraft] = useState(() => normalizeFace(props.initial))
+      const [tab, setTab] = useState(0)
+      const [angle, setAngle] = useState(0)
+      const [spin, setSpin] = useState(false)
+      const [history, setHistory] = useState(() => [normalizeFace(props.initial)])
+      const [cursor, setCursor] = useState(0)
+      const [codeOpen, setCodeOpen] = useState(false)
+      const [codeInput, setCodeInput] = useState('')
+      const [toast, setToast] = useState('')
+      const stageRef = useRef(null)
+      const canvasRef = useRef(null)
+      const draftRef = useRef(draft)
+      const angleRef = useRef(angle)
+      draftRef.current = draft
+      angleRef.current = angle
+      const [mode, setMode] = useState('3d')
+      const lastPush = useRef(0)
+
+      useEffect(() => {
+        const onKey = (e) => {
+          if (e.key === 'Escape') props.onClose()
+        }
+        window.addEventListener('keydown', onKey)
+        return () => window.removeEventListener('keydown', onKey)
+      }, [props])
+
+      useEffect(() => {
+        if (mode !== '3d') return
+        const cv = canvasRef.current
+        if (!cv) return
+        const eng = createFace3D(cv, () => draftRef.current, () => angleRef.current)
+        return () => {
+          if (eng) eng.dispose()
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [mode])
+
+      useEffect(() => {
+        if (!spin) return
+        const t = window.setInterval(() => setAngle((a) => (a + 2 > 32 ? -32 : a + 2)), 60)
+        return () => window.clearInterval(t)
+      }, [spin])
+
+      const commit = (next, pushHistory) => {
+        const f = normalizeFace(next)
+        setDraft(f)
+        if (pushHistory) {
+          const now = Date.now()
+          if (now - lastPush.current > 350) {
+            lastPush.current = now
+            setHistory((h) => h.slice(0, cursor + 1).concat([f]).slice(-60))
+            setCursor((c) => Math.min(c + 1, 59))
+          }
+        }
+      }
+
+      const setParam = (key, value) => commit(Object.assign({}, draft, { [key]: value }), true)
+
+      const undo = () => {
+        if (cursor <= 0) return
+        setCursor(cursor - 1)
+        setDraft(history[cursor - 1])
+      }
+      const redo = () => {
+        if (cursor >= history.length - 1) return
+        setCursor(cursor + 1)
+        setDraft(history[cursor + 1])
+      }
+
+      const activeGroup = FACE_GROUPS[tab]
+      const renderControl = (item) => {
+        const [key, label, def, min, max, kind] = item
+        const value = draft[key]
+        if (kind && kind.indexOf('palette:') === 0) {
+          const palette = kind.slice(8) === 'F_SKIN' ? F_SKIN : kind.slice(8) === 'F_HAIR' ? F_HAIR : kind.slice(8) === 'F_EYE' ? F_EYE : F_OUTFIT
+          return h(
+            'div',
+            { className: 'sc-face-sw', key: key },
+            h('span', { className: 'lab' }, label),
+            h(
+              'div',
+              { className: 'sc-swatches' },
+              palette.map((color, i) =>
+                h('button', {
+                  key: color + i,
+                  className: 'sc-swatch' + (value === i ? ' on' : ''),
+                  style: { background: color },
+                  onClick: () => setParam(key, i),
+                  title: color,
+                }),
+              ),
+            ),
+          )
+        }
+        if (kind && kind.indexOf('names:') === 0) {
+          const names = kind.slice(6).split('|')
+          return h(
+            'div',
+            { className: 'sc-face-sw', key: key },
+            h('span', { className: 'lab' }, label),
+            h(
+              'div',
+              { className: 'sc-seg' },
+              names.map((n, i) =>
+                h('button', { key: n, className: value === i ? 'on' : '', onClick: () => setParam(key, i) }, n),
+              ),
+            ),
+          )
+        }
+        return h(
+          'div',
+          { className: 'sc-face-row', key: key },
+          h('span', { className: 'lab' }, label),
+          h('input', {
+            type: 'range',
+            min: min,
+            max: max,
+            value: value,
+            onChange: (e) => setParam(key, Number(e.target.value)),
+            onDoubleClick: () => setParam(key, def),
+          }),
+          h('span', { className: 'num' }, value > 0 ? '+' + value : String(value)),
+        )
+      }
+
+      const save = () => {
+        const f = normalizeFace(draft)
+        writeJson(K_CHARACTER, f)
+        props.onSave(f)
+        props.onClose()
+      }
+
+      return h(
+        'div',
+        { className: 'sc-face-mask', onMouseDown: (e) => e.target === e.currentTarget && props.onClose() },
+        h(
+          'div',
+          { className: 'sc-face', onMouseDown: (e) => e.stopPropagation() },
+          h(
+            'div',
+            { className: 'sc-face-head' },
+            h('span', { className: 'sc-face-title' }, '捏脸工作室'),
+            h('span', { className: 'sc-face-meta' }, '拖动滑杆实时预览 · 双击滑杆归零'),
+            h('span', { className: 'sc-grow' }),
+            h(
+              'div',
+              { className: 'sc-seg' },
+              ['3d', '2d'].map((m) =>
+                h(
+                  'button',
+                  { key: m, className: mode === m ? 'on' : '', onClick: () => setMode(m) },
+                  m === '3d' ? '3D' : '2D',
+                ),
+              ),
+            ),
+            h(
+              'div',
+              { className: 'sc-seg' },
+              F_STYLE.map((st) =>
+                h(
+                  'button',
+                  {
+                    key: st,
+                    className: draft.style === st ? 'on' : '',
+                    onClick: () => commit(Object.assign({}, draft, { style: st }), true),
+                  },
+                  st === 'cartoon' ? 'Q 版' : '半写实',
+                ),
+              ),
+            ),
+            h('button', { className: 'sc-btn sc-btn-sm', onClick: undo, disabled: cursor <= 0 }, '撤销'),
+            h('button', { className: 'sc-btn sc-btn-sm', onClick: redo, disabled: cursor >= history.length - 1 }, '重做'),
+            h('button', { className: 'sc-btn sc-btn-sm', onClick: () => commit(randomFace(draft.style), true) }, '随机'),
+            h('button', { className: 'sc-btn sc-btn-sm', onClick: () => commit(zeroFace(draft.style), true) }, '重置'),
+            h('button', { className: 'sc-btn sc-btn-primary sc-btn-sm', onClick: save }, '保存'),
+            h('button', { className: 'sc-btn sc-btn-sm', onClick: props.onClose }, '关闭'),
+          ),
+          h(
+            'div',
+            { className: 'sc-face-body' },
+            h(
+              'div',
+              { className: 'sc-face-left' },
+              h(
+                'div',
+                { className: 'sc-face-stage', ref: stageRef },
+                mode === '3d'
+                  ? h('canvas', {
+                      ref: canvasRef,
+                      width: 620,
+                      height: 760,
+                      style: { height: '100%', width: 'auto', maxWidth: '100%', display: 'block' },
+                    })
+                  : h(FaceRender, { face: draft, size: 300, angle, uid: 'editor' }),
+              ),
+              h(
+                'div',
+                { style: { width: '100%', display: 'flex', alignItems: 'center', gap: '8px' } },
+                h('span', { className: 'sc-camp-meta' }, '转台'),
+                h('button', { className: 'sc-btn sc-btn-sm', onClick: () => setAngle((a) => Math.max(-32, a - 6)) }, '◀'),
+                h('input', {
+                  type: 'range',
+                  min: -32,
+                  max: 32,
+                  value: angle,
+                  style: { flex: 1, accentColor: '#247bbf' },
+                  onChange: (e) => setAngle(Number(e.target.value)),
+                }),
+                h('button', { className: 'sc-btn sc-btn-sm', onClick: () => setAngle((a) => Math.min(32, a + 6)) }, '▶'),
+              ),
+              h(
+                'div',
+                { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', justifyContent: 'center' } },
+                h('button', { className: 'sc-btn sc-btn-sm' + (spin ? ' sc-btn-primary' : ''), onClick: () => setSpin((v) => !v) }, spin ? '停止转台' : '自动转台'),
+                h('button', { className: 'sc-btn sc-btn-sm', onClick: () => setAngle(0) }, '正面'),
+                h('button', { className: 'sc-btn sc-btn-sm', onClick: () => setCodeOpen((v) => !v) }, '脸码'),
+              ),
+              codeOpen
+                ? h(
+                    'div',
+                    { style: { width: '100%', display: 'flex', flexDirection: 'column', gap: '6px' } },
+                    h('input', {
+                      className: 'sc-input sc-face-code',
+                      style: { width: '100%', fontFamily: 'ui-monospace,Consolas,monospace' },
+                      readOnly: true,
+                      value: faceCodeOf(draft),
+                      onFocus: (e) => e.target.select(),
+                    }),
+                    h(
+                      'div',
+                      { style: { display: 'flex', gap: '6px' } },
+                      h(
+                        'button',
+                        {
+                          className: 'sc-btn sc-btn-sm',
+                          onClick: () => {
+                            try {
+                              navigator.clipboard.writeText(faceCodeOf(draft))
+                              setToast('已复制')
+                            } catch (e) {
+                              setToast('复制失败，手动选中')
+                            }
+                          },
+                        },
+                        '复制',
+                      ),
+                      h('input', {
+                        className: 'sc-input',
+                        style: { flex: 1, minWidth: '90px' },
+                        placeholder: '粘贴脸码…',
+                        value: codeInput,
+                        onChange: (e) => setCodeInput(e.target.value),
+                      }),
+                      h(
+                        'button',
+                        {
+                          className: 'sc-btn sc-btn-sm',
+                          onClick: () => {
+                            const f = faceFromCode(codeInput)
+                            if (!f) {
+                              setToast('脸码无效')
+                              return
+                            }
+                            commit(f, true)
+                            setToast('已套用')
+                          },
+                        },
+                        '套用',
+                      ),
+                    ),
+                  )
+                : null,
+              toast ? h('div', { className: 'sc-camp-meta' }, toast) : null,
+            ),
+            h(
+              'div',
+              { className: 'sc-face-right' },
+              h(
+                'div',
+                { className: 'sc-face-tabs' },
+                FACE_GROUPS.map((g, i) =>
+                  h(
+                    'button',
+                    { key: g.key, className: 'sc-face-tab' + (i === tab ? ' on' : ''), onClick: () => setTab(i) },
+                    g.label,
+                  ),
+                ),
+              ),
+              h('div', { className: 'sc-face-params' }, activeGroup.items.map(renderControl)),
+            ),
+          ),
+          h(
+            'div',
+            { className: 'sc-face-foot' },
+            h('span', { className: 'sc-camp-meta' }, '预设'),
+            FACE_PRESETS.map((p) =>
+              h(
+                'button',
+                { key: p.name, className: 'sc-btn sc-btn-sm', onClick: () => commit(applyPreset(draft, p), true) },
+                p.name,
+              ),
+            ),
+            h('span', { className: 'sc-grow' }),
+            h('span', { className: 'sc-camp-meta' }, '保存后：头像、串门现场、发布营地都会用这张脸'),
+          ),
+        ),
+      )
+    }
+
+    /**
+     * 营地快照 = 我装了哪些插件 + 营地名/一句话。
+     * P1 只做「发布 / 浏览 / 看清单」：不装任何东西，复刻留到 P2。
+     */
+    function CampPanel(props) {
+      const auth = props.auth
+      const [scope, setScope] = useState('friends')
+      const [camps, setCamps] = useState([])
+      const [detail, setDetail] = useState(null)
+      const [myPlugins, setMyPlugins] = useState(null)
+      const [mine, setMine] = useState(null)
+      const [showForm, setShowForm] = useState(false)
+      const [form, setForm] = useState({ name: '', greeting: '', visibility: 'friends' })
+      const [busy, setBusy] = useState(false)
+      const [err, setErr] = useState('')
+      const [loading, setLoading] = useState(false)
+      const [shareCode, setShareCode] = useState('')
+      const [picked, setPicked] = useState({})
+      const [applying, setApplying] = useState(false)
+      const [applyResults, setApplyResults] = useState(null)
+      const [myChar, setMyChar] = useState(() => readMyCharacter())
+      const [visitors, setVisitors] = useState([])
+      const [faceOpen, setFaceOpen] = useState(false)
+
+      const collect = async () => {
+        try {
+          const res = await fetch('/api/share-chat/camp/collect', { credentials: 'same-origin' })
+          if (!res.ok) return []
+          const data = await res.json()
+          return Array.isArray(data.plugins) ? data.plugins : []
+        } catch (e) {
+          return []
+        }
+      }
+
+      const loadMine = async () => {
+        try {
+          const r = await api(auth.server, '/api/camp/' + encodeURIComponent(auth.id), { token: auth.token })
+          setMine(r)
+          setForm((f) => ({
+            name: f.name || r.camp.name || '',
+            greeting: f.greeting || r.camp.greeting || '',
+            visibility: r.visibility || f.visibility,
+          }))
+        } catch (e) {
+          if (e.code === 'not-found') setMine(null)
+        }
+      }
+
+      const loadList = async (sc) => {
+        setLoading(true)
+        setErr('')
+        try {
+          const r = await api(auth.server, '/api/camps?scope=' + sc, { token: auth.token })
+          setCamps(r.camps || [])
+        } catch (e) {
+          setErr(friendly(e))
+        } finally {
+          setLoading(false)
+        }
+      }
+
+      useEffect(() => {
+        collect().then(setMyPlugins)
+        loadMine()
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [])
+      useEffect(() => {
+        loadList(scope)
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [scope])
+
+      const publish = async () => {
+        setBusy(true)
+        setErr('')
+        try {
+          const all = await collect()
+          const plugins = all.filter((p) => !p.builtin)
+          const camp = {
+            name: form.name || (auth.displayName || auth.id) + ' 的营地',
+            greeting: form.greeting,
+            theme: null,
+            character: myChar,
+            plugins,
+          }
+          const saved = await api(auth.server, '/api/camp', {
+            method: 'POST',
+            token: auth.token,
+            body: { camp, visibility: form.visibility },
+          })
+          if (saved && saved.code) setShareCode(saved.code)
+          setShowForm(false)
+          await loadMine()
+          await loadList(scope)
+        } catch (e) {
+          setErr(friendly(e))
+        } finally {
+          setBusy(false)
+        }
+      }
+
+      const unpublish = async () => {
+        setBusy(true)
+        try {
+          await api(auth.server, '/api/camp', { method: 'DELETE', token: auth.token })
+          setMine(null)
+          await loadList(scope)
+        } catch (e) {
+          setErr(friendly(e))
+        } finally {
+          setBusy(false)
+        }
+      }
+
+      // 串门现场：每 5 秒心跳，每 3 秒拉一次访客
+      useEffect(() => {
+        if (!detail) return
+        const owner = detail.owner
+        const code = detail.visibility === 'unlisted' ? '' : ''
+        let alive = true
+        const beat = async () => {
+          try {
+            const r = await api(auth.server, '/api/camp/' + encodeURIComponent(owner) + '/visit' + (code ? '?code=' + code : ''), {
+              method: 'POST',
+              token: auth.token,
+              body: { character: myChar },
+            })
+            if (alive && r && Array.isArray(r.visitors)) setVisitors(r.visitors)
+          } catch (e) {
+            /* ignore */
+          }
+        }
+        const poll = async () => {
+          try {
+            const r = await api(auth.server, '/api/camp/' + encodeURIComponent(owner) + '/visitors', { token: auth.token })
+            if (alive && r && Array.isArray(r.visitors)) setVisitors(r.visitors)
+          } catch (e) {
+            /* ignore */
+          }
+        }
+        beat()
+        const t1 = window.setInterval(beat, 5000)
+        const t2 = window.setInterval(poll, 3000)
+        return () => {
+          alive = false
+          window.clearInterval(t1)
+          window.clearInterval(t2)
+        }
+      }, [detail, myChar, auth.server, auth.token])
+
+      const openDetail = async (owner, rev) => {
+        setErr('')
+        setPicked({})
+        setApplyResults(null)
+        setVisitors([])
+        try {
+          const q = rev ? '?rev=' + rev : ''
+          const r = await api(auth.server, '/api/camp/' + encodeURIComponent(owner) + q, { token: auth.token })
+          setDetail(r)
+        } catch (e) {
+          setErr(friendly(e))
+        }
+      }
+
+      const diffOf = (p) => {
+        if (p.builtin) return ['内置', 'sc-badge-builtin']
+        const mineP = (myPlugins || []).find((x) => x.name === p.name)
+        if (!mineP) return ['可安装', 'sc-badge-new']
+        if (mineP.version === p.version) return ['已有', 'sc-badge-have']
+        return ['版本不同', 'sc-badge-diff']
+      }
+
+      const pickable = (p) => {
+        const [tag] = diffOf(p)
+        return tag === '可安装' || tag === '版本不同'
+      }
+
+      const togglePick = (p) => {
+        setPicked((prev) => {
+          const next = { ...prev }
+          if (next[p.name]) delete next[p.name]
+          else next[p.name] = p
+          return next
+        })
+      }
+
+      const replicate = async (camp) => {
+        const chosen = Object.values(picked)
+        if (!chosen.length) return
+        setApplying(true)
+        setApplyResults(null)
+        setErr('')
+        try {
+          const nres = await fetch('/api/share-chat/camp/nonce', { credentials: 'same-origin' })
+          if (!nres.ok) throw new Error('拿不到本机授权（' + nres.status + '）')
+          const { nonce } = await nres.json()
+          const res = await fetch('/api/share-chat/camp/apply', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              nonce,
+              specs: chosen.map((p) => ({ spec: p.spec, name: p.name, version: p.version })),
+            }),
+          })
+          const data = await res.json().catch(() => ({}))
+          if (!res.ok) throw new Error(data.error || '安装失败 ' + res.status)
+          setApplyResults(data.results || [])
+          setPicked({})
+          const fresh = await collect()
+          setMyPlugins(fresh)
+        } catch (e) {
+          setErr(String(e.message || e))
+        } finally {
+          setApplying(false)
+        }
+      }
+
+      const undoApply = async (targets) => {
+        setApplying(true)
+        try {
+          const res = await fetch('/api/share-chat/camp/remove', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ targets }),
+          })
+          const data = await res.json().catch(() => ({}))
+          setApplyResults(data.results && data.results.length ? null : null)
+          const fresh = await collect()
+          setMyPlugins(fresh)
+          setErr(data.results && data.results.some((r) => !r.ok) ? '部分撤销失败，看控制台' : '')
+        } catch (e) {
+          setErr(String(e.message || e))
+        } finally {
+          setApplying(false)
+        }
+      }
+
+      if (faceOpen) {
+        return h(FaceEditor, {
+          initial: myChar,
+          onSave: (f) => setMyChar(f),
+          onClose: () => setFaceOpen(false),
+        })
+      }
+
+      if (detail) {
+        const camp = detail.camp
+        const mineMap = new Map((myPlugins || []).map((p) => [p.name, p]))
+        return h(
+          'div',
+          { className: 'sc-camp' },
+          h(
+            'div',
+            { className: 'sc-camp-top' },
+            h('button', { className: 'sc-btn sc-btn-sm', onClick: () => setDetail(null) }, '← 返回'),
+            h('strong', { style: { fontSize: '14px' } }, camp.name),
+            h('span', { className: 'sc-camp-meta' }, '@' + detail.owner),
+            h('span', { className: 'sc-grow' }),
+            detail.revisions.length > 1
+              ? h(
+                  'select',
+                  {
+                    className: 'sc-input',
+                    style: { height: '28px', width: 'auto', padding: '0 8px' },
+                    value: String(detail.rev),
+                    onChange: (e) => openDetail(detail.owner, Number(e.target.value)),
+                  },
+                  detail.revisions.map((r) =>
+                    h('option', { key: r.rev, value: String(r.rev) }, '第 ' + r.rev + ' 版'),
+                  ),
+                )
+              : null,
+            h('span', { style: { opacity: 0.5, fontSize: '11px' } }, '复刻功能下一步开放'),
+          ),
+          h(CampScene, {
+            owner: detail.owner,
+            ownerName: camp.name,
+            ownerCharacter: camp.character,
+            myCharacter: myChar,
+            me: auth.id,
+            visitors,
+          }),
+          camp.greeting ? h('div', { className: 'sc-camp-greet', style: { marginBottom: '10px' } }, camp.greeting) : null,
+          h('div', { className: 'sc-camp-meta' }, '共 ' + camp.plugins.length + ' 个插件 · 与你有 ' + (myPlugins ? myPlugins.length : 0) + ' 个'),
+          h(
+            'div',
+            { className: 'sc-camp-plugins' },
+            camp.plugins.map((p, i) => {
+              const [tag, cls] = diffOf(p)
+              const can = pickable(p)
+              return h(
+                'div',
+                { className: 'sc-camp-plug', key: i },
+                can
+                  ? h('input', {
+                      type: 'checkbox',
+                      checked: !!picked[p.name],
+                      onChange: () => togglePick(p),
+                    })
+                  : null,
+                h('span', { className: 'nm' }, p.name + (p.version ? '@' + p.version : '')),
+                h('span', { className: 'sc-camp-meta' }, p.source === 'git' ? 'git' : p.source || ''),
+                h('span', { className: 'sc-camp-badge ' + cls }, tag),
+              )
+            }),
+          ),
+          h(
+            'div',
+            { style: { display: 'flex', gap: '8px', alignItems: 'center', marginTop: '14px', flexWrap: 'wrap' } },
+            h(
+              'button',
+              {
+                className: 'sc-btn sc-btn-primary',
+                disabled: applying || Object.keys(picked).length === 0,
+                onClick: () => replicate(camp),
+              },
+              applying ? '安装中…' : '复刻选中的 ' + Object.keys(picked).length + ' 个插件',
+            ),
+            applyResults
+              ? h(
+                  'button',
+                  {
+                    className: 'sc-btn',
+                    disabled: applying,
+                    onClick: () =>
+                      undoApply(applyResults.filter((r) => r.ok && r.bundle).map((r) => r.bundle)),
+                  },
+                  '撤销这次安装',
+                )
+              : null,
+            h('span', { className: 'sc-camp-meta' }, '只装你勾的；装完可能需要刷新页面'),
+          ),
+          applyResults
+            ? h(
+                'div',
+                { className: 'sc-camp-plugins' },
+                applyResults.map((r, i) =>
+                  h(
+                    'div',
+                    { className: 'sc-camp-plug', key: i },
+                    h('span', { className: 'nm' }, r.spec || r.name || ''),
+                    h(
+                      'span',
+                      { className: 'sc-camp-badge ' + (r.ok ? 'sc-badge-have' : 'sc-badge-diff') },
+                      r.ok ? '已安装' + (r.application && r.application !== 'applied' ? '（' + r.application + '）' : '') : '失败',
+                    ),
+                    h('span', { className: 'sc-camp-meta' }, r.ok ? '' : String(r.error || '')),
+                  ),
+                ),
+              )
+            : null,
+          err ? h('div', { className: 'sc-err', style: { marginTop: '10px' } }, err) : null,
+        )
+      }
+
+      return h(
+        'div',
+        { className: 'sc-camp' },
+        h(
+          'div',
+          { className: 'sc-camp-top' },
+          h('strong', { style: { fontSize: '14px' } }, '串门'),
+          h('span', { className: 'sc-camp-meta' }, '看看好友的营地，装了哪些插件'),
+          h('span', { className: 'sc-grow' }),
+          h(
+            'button',
+            {
+              className: 'sc-char-btn',
+              title: '打开捏脸工作室',
+              onClick: () => setFaceOpen(true),
+            },
+            h(Character, { ch: myChar, size: 22 }),
+            '捏脸',
+          ),
+          h('button', { className: 'sc-btn sc-btn-sm', onClick: () => setShowForm((v) => !v) }, mine ? '重新发布' : '发布我的营地'),
+          h('button', { className: 'sc-btn sc-btn-sm', onClick: () => loadList(scope) }, '刷新'),
+        ),
+        h(
+          'div',
+          { className: 'sc-camp-top' },
+          h(
+            'button',
+            { className: 'sc-btn sc-btn-sm' + (scope === 'friends' ? ' sc-btn-primary' : ''), onClick: () => setScope('friends') },
+            '好友营地',
+          ),
+          h(
+            'button',
+            { className: 'sc-btn sc-btn-sm' + (scope === 'public' ? ' sc-btn-primary' : ''), onClick: () => setScope('public') },
+            '营地广场',
+          ),
+          mine
+            ? h(
+                'span',
+                { className: 'sc-camp-meta' },
+                '我的营地已发布 · 第 ' + mine.rev + ' 版 · ' + mine.visibility,
+              )
+            : null,
+          mine && shareCode
+            ? h(
+                'button',
+                {
+                  className: 'sc-camp-badge sc-badge-new',
+                  style: { cursor: 'pointer', border: 0 },
+                  onClick: () => navigator.clipboard && navigator.clipboard.writeText(shareCode),
+                  title: '复制访问码',
+                },
+                '访问码 ' + shareCode,
+              )
+            : null,
+        ),
+        showForm
+          ? h(
+              'div',
+              { className: 'sc-camp-form', style: { margin: '0 auto 14px' } },
+              h('input', {
+                className: 'sc-input',
+                placeholder: '营地名（例如：摸鱼营地）',
+                value: form.name,
+                onChange: (e) => setForm({ ...form, name: e.target.value }),
+              }),
+              h('input', {
+                className: 'sc-input',
+                placeholder: '一句话签名',
+                value: form.greeting,
+                onChange: (e) => setForm({ ...form, greeting: e.target.value }),
+              }),
+              h(
+                'select',
+                {
+                  className: 'sc-input',
+                  value: form.visibility,
+                  onChange: (e) => setForm({ ...form, visibility: e.target.value }),
+                },
+                h('option', { value: 'friends' }, '仅好友可见'),
+                h('option', { value: 'public' }, '公开（进营地广场）'),
+                h('option', { value: 'unlisted' }, '不列出（凭访问码）'),
+              ),
+              h(
+                'div',
+                { style: { display: 'flex', gap: '8px', alignItems: 'center' } },
+                h('button', { className: 'sc-btn sc-btn-primary', onClick: publish, disabled: busy }, busy ? '发布中…' : '发布'),
+                mine ? h('button', { className: 'sc-btn', onClick: unpublish, disabled: busy }, '下线') : null,
+                h('span', { className: 'sc-camp-meta' }, '发布的内容只有营地名、签名和插件清单，不含路径/凭据/会话'),
+              ),
+            )
+          : null,
+        err ? h('div', { className: 'sc-err', style: { marginBottom: '8px' } }, err) : null,
+        loading ? h('div', { className: 'sc-camp-meta' }, '加载中…') : null,
+        h(
+          'div',
+          { className: 'sc-camp-grid' },
+          camps.length === 0 && !loading
+            ? emptyState('🏕', scope === 'public' ? '广场上还没有营地' : '好友还没人发布营地', '发布一个自己的，或去广场看看')
+            : camps.map((c) =>
+                h(
+                  'div',
+                  { className: 'sc-camp-card', key: c.owner, onClick: () => openDetail(c.owner) },
+                  h(Character, { ch: c.character, id: c.owner, size: 34 }),
+                  h(
+                    'div',
+                    { className: 'sc-camp-info' },
+                    h('div', { className: 'sc-camp-name' }, c.name),
+                    h('div', { className: 'sc-camp-greet' }, c.greeting || '（没有签名）'),
+                    h(
+                      'div',
+                      { className: 'sc-camp-meta' },
+                      '@' + c.owner + ' · ' + c.pluginCount + ' 个插件 · 第 ' + c.rev + ' 版',
+                    ),
+                  ),
+                  h('span', { className: 'sc-camp-badge sc-badge-new' }, '进去看看'),
+                ),
+              ),
+        ),
+      )
+    }
+
+    // ───────────────────────── 虚拟形象 ─────────────────────────
+
+    const K_CHARACTER = 'dsh-share-chat.character'
+    const CHAR_SKINS = ['#f3cba6', '#e8b78f', '#c98d64', '#8d5a3b']
+    const CHAR_HAIRS = ['#2b2b2b', '#5a3a26', '#8a5a2b', '#d9b25f', '#3d5a80', '#a33b52']
+    const CHAR_OUTFITS = ['#247bbf', '#2f8f65', '#8a5ec9', '#d0693b', '#3d7a8c', '#b03a5b']
+
+    function charHash(str) {
+      let h = 2166136261
+      const t = String(str || '?')
+      for (let i = 0; i < t.length; i++) {
+        h ^= t.charCodeAt(i)
+        h = Math.imul(h, 16777619)
+      }
+      return Math.abs(h)
+    }
+
+    const CHAR_HATS = ['none', 'none', 'none', 'cap', 'beanie', 'halo']
+
+    function defaultCharacter(id) {
+      const h = charHash(id)
+      return {
+        seed: h % 999999,
+        skin: CHAR_SKINS[h % CHAR_SKINS.length],
+        hair: CHAR_HAIRS[(h >> 3) % CHAR_HAIRS.length],
+        outfit: CHAR_OUTFITS[(h >> 6) % CHAR_OUTFITS.length],
+        hat: CHAR_HATS[(h >> 9) % CHAR_HATS.length],
+      }
+    }
+
+    function normalizeCharacter(c, id) {
+      const base = defaultCharacter(id || 'anon')
+      const src = c && typeof c === 'object' ? c : {}
+      const color = (v, fb) => (/^#[0-9a-f]{6}$/i.test(String(v || '')) ? String(v) : fb)
+      return {
+        seed: Number.isFinite(Number(src.seed)) ? Number(src.seed) : base.seed,
+        skin: color(src.skin, base.skin),
+        hair: color(src.hair, base.hair),
+        outfit: color(src.outfit, base.outfit),
+        hat: ['none', 'cap', 'beanie', 'halo'].includes(src.hat) ? src.hat : base.hat,
+      }
+    }
+
+    function readMyCharacter() {
+      return normalizeFace(readJson(K_CHARACTER))
+    }
+
+    function randomCharacter(prev) {
+      return randomFace((prev && prev.style) || 'cartoon')
+    }
+
+    /** 小人儿：v2 捏脸参数的渲染入口（兼容 v1 哈希形象） */
+    function Character(props) {
+      const f = props.face ? normalizeFace(props.face, props.id) : normalizeFace(props.ch, props.id)
+      const size = props.size || 56
+      return h(FaceRender, {
+        face: f,
+        size: size,
+        angle: props.angle === undefined ? 0 : props.angle,
+        uid: (props.id || '') + (props.uid || ''),
+      })
+    }
+
+    /** 串门现场：营地主人 + 我 + 其他访客 */
+    function CampScene(props) {
+      const ownerChar = normalizeFace(props.ownerCharacter, props.owner)
+      const myChar = normalizeFace(props.myCharacter, props.me)
+      const visitors = Array.isArray(props.visitors) ? props.visitors.filter((v) => v.id !== props.me && v.id !== props.owner) : []
+      const slots = [
+        { key: 'me', char: myChar, name: '我', left: '12%', walk: true },
+        { key: 'owner', char: ownerChar, name: props.ownerName || props.owner, left: '72%' },
+        ...visitors.slice(0, 3).map((v, i) => ({
+          key: v.id,
+          char: normalizeFace(v.character, v.id),
+          name: v.name || v.id,
+          left: 34 + i * 14 + '%',
+        })),
+      ]
+      return h(
+        'div',
+        { className: 'sc-scene' },
+        h('div', { className: 'sc-scene-floor' }),
+        visitors.length === 0
+          ? h('div', { className: 'sc-scene-empty' }, '现在只有你们俩，等别人推门进来')
+          : null,
+        slots.map((slot) =>
+          h(
+            'div',
+            {
+              key: slot.key,
+              className: 'sc-scene-actor' + (slot.walk ? ' walk' : ''),
+              style: { left: slot.left },
+            },
+            h('div', { className: 'sc-scene-bob' }, h(Character, { ch: slot.char, size: slot.key === 'owner' ? 62 : 50 })),
+            h('div', { className: 'sc-scene-name' }, slot.name),
+          ),
+        ),
+      )
+    }
+
+    // ───────────────────────── 捏脸引擎 v2 ─────────────────────────
+
+    const FACE_V = 2
+    const F_SKIN = ['#f7dbc4', '#f0c9a8', '#e2b189', '#cb9468', '#a9744c', '#8a5738']
+    const F_HAIR = ['#241f1c', '#43301f', '#65452a', '#95683c', '#d8b05c', '#8b3646', '#3b567c', '#6f4785']
+    const F_EYE = ['#26221f', '#4a3826', '#33513f', '#38557a', '#543544', '#6b5a2f']
+    const F_OUTFIT = ['#247bbf', '#2f8f65', '#8a5ec9', '#d0693b', '#3d7a8c', '#b03a5b', '#5a6570', '#c9a227']
+    const F_HAT = ['none', 'cap', 'beanie', 'halo']
+    const F_GLASSES = ['none', 'round', 'square']
+    const F_EARRING = ['none', 'dot']
+    const F_STYLE = ['cartoon', 'real']
+
+    const FACE_GROUPS = [
+      {
+        key: 'shape',
+        label: '脸型',
+        items: [
+          ['faceWidth', '脸宽', 0, -100, 100],
+          ['jaw', '下颌', 0, -100, 100],
+          ['cheek', '颧骨', 0, -100, 100],
+          ['chin', '下巴', 0, -100, 100],
+          ['forehead', '额头', 0, -100, 100],
+        ],
+      },
+      {
+        key: 'eyes',
+        label: '眼睛',
+        items: [
+          ['eyeSize', '大小', 0, -100, 100],
+          ['eyeSpacing', '眼距', 0, -100, 100],
+          ['eyeTilt', '眼角', 0, -100, 100],
+          ['eyeHeight', '位置', 0, -100, 100],
+          ['eyeLid', '眼睑', 0, 0, 100],
+          ['eyePupil', '瞳孔', 0, -100, 100],
+        ],
+      },
+      {
+        key: 'brow',
+        label: '眉毛',
+        items: [
+          ['browThick', '粗细', 0, -100, 100],
+          ['browArch', '弧度', 0, -100, 100],
+          ['browHeight', '高低', 0, -100, 100],
+          ['browTilt', '眉头', 0, -100, 100],
+        ],
+      },
+      {
+        key: 'nose',
+        label: '鼻子',
+        items: [
+          ['noseLength', '长短', 0, -100, 100],
+          ['noseWidth', '宽窄', 0, -100, 100],
+          ['noseBridge', '鼻梁', 0, 0, 100],
+          ['noseTip', '鼻头', 0, -100, 100],
+        ],
+      },
+      {
+        key: 'mouth',
+        label: '嘴巴',
+        items: [
+          ['mouthWidth', '宽窄', 0, -100, 100],
+          ['mouthFull', '厚薄', 0, -100, 100],
+          ['mouthSmile', '嘴角', 0, -100, 100],
+          ['mouthHeight', '高低', 0, -100, 100],
+        ],
+      },
+      {
+        key: 'ears',
+        label: '耳朵',
+        items: [
+          ['earSize', '大小', 0, -100, 100],
+          ['earAngle', '角度', 0, -100, 100],
+        ],
+      },
+      {
+        key: 'look',
+        label: '肤色',
+        items: [
+          ['skinTone', '肤色', 1, 0, F_SKIN.length - 1, 'palette:F_SKIN'],
+          ['blush', '腮红', 30, 0, 100],
+          ['shadow', '面部阴影', 45, 0, 100],
+          ['eyeColor', '瞳色', 0, 0, F_EYE.length - 1, 'palette:F_EYE'],
+          ['browColor', '眉色', 0, 0, F_HAIR.length - 1, 'palette:F_HAIR'],
+        ],
+      },
+      {
+        key: 'hair',
+        label: '头发',
+        items: [
+          ['hairStyle', '发型', 0, 0, 7, 'names:' + ['短发', '波波', '长直', '马尾', '卷发', '寸头', '偏分', '双马尾'].join('|')],
+          ['hairColor', '发色', 0, 0, F_HAIR.length - 1, 'palette:F_HAIR'],
+          ['fringe', '刘海', 45, 0, 100],
+        ],
+      },
+      {
+        key: 'makeup',
+        label: '妆容',
+        items: [
+          ['eyeliner', '眼线', 0, 0, 100],
+          ['lip', '唇色', 35, 0, 100],
+        ],
+      },
+      {
+        key: 'acc',
+        label: '配饰',
+        items: [
+          ['hat', '帽子', 0, 0, F_HAT.length - 1, 'names:' + F_HAT.join('|')],
+          ['glasses', '眼镜', 0, 0, F_GLASSES.length - 1, 'names:' + F_GLASSES.join('|')],
+          ['earring', '耳饰', 0, 0, F_EARRING.length - 1, 'names:' + F_EARRING.join('|')],
+        ],
+      },
+      {
+        key: 'body',
+        label: '身形',
+        items: [
+          ['build', '体宽', 0, -100, 100],
+          ['outfit', '衣服', 0, 0, F_OUTFIT.length - 1, 'palette:F_OUTFIT'],
+        ],
+      },
+    ]
+
+    const FACE_PARAMS = []
+    for (const g of FACE_GROUPS) for (const it of g.items) FACE_PARAMS.push(it)
+
+    const clampNum = (v, min, max, fb) => {
+      const n = Number(v)
+      if (!Number.isFinite(n)) return fb
+      return Math.max(min, Math.min(max, Math.round(n)))
+    }
+
+    function zeroFace(style) {
+      const f = { v: FACE_V, style: style || 'cartoon' }
+      for (const it of FACE_PARAMS) f[it[0]] = it[2]
+      return f
+    }
+
+    /** v1（seed/skin/hair/outfit/hat）→ v2 */
+    function faceFromV1(old, id) {
+      const h = charHash(id || 'anon')
+      const seed = old && Number.isFinite(Number(old.seed)) ? Number(old.seed) : h % 999999
+      const pick = (n) => ((seed >> n) % 61) - 30
+      const f = zeroFace('cartoon')
+      f.faceWidth = pick(0)
+      f.jaw = pick(2)
+      f.cheek = pick(4)
+      f.chin = pick(6)
+      f.forehead = pick(8)
+      f.eyeSize = pick(10)
+      f.eyeSpacing = pick(12)
+      f.eyeTilt = pick(14)
+      f.browThick = pick(16)
+      f.noseLength = pick(18)
+      f.mouthWidth = pick(20)
+      const near = (hex, arr, fb) => {
+        const c = String(hex || '')
+        const i = arr.findIndex((x) => x.toLowerCase() === c.toLowerCase())
+        return i >= 0 ? i : fb
+      }
+      f.skinTone = near(old && old.skin, F_SKIN, 1)
+      f.hairColor = near(old && old.hair, F_HAIR, 0)
+      f.outfit = near(old && old.outfit, F_OUTFIT, 0)
+      f.hat = Math.max(0, F_HAT.indexOf(String((old && old.hat) || 'none')))
+      return f
+    }
+
+    function normalizeFace(input, id) {
+      const src = input && typeof input === 'object' ? input : null
+      if (!src) return faceFromV1(null, id)
+      if (src.v !== FACE_V && (src.shape || src.eyes) === undefined && src.faceWidth === undefined) {
+        return faceFromV1(src, id)
+      }
+      const f = zeroFace(F_STYLE.includes(src.style) ? src.style : 'cartoon')
+      for (const it of FACE_PARAMS) {
+        const [key, , def, min, max] = it
+        f[key] = clampNum(src[key], min, max, def)
+      }
+      return f
+    }
+
+    function randomFace(style) {
+      const r = (min, max) => Math.round(min + Math.random() * (max - min))
+      const f = zeroFace(style)
+      for (const it of FACE_PARAMS) {
+        const [key, , , min, max, kind] = it
+        if (kind && kind.startsWith('palette:')) f[key] = r(min, max)
+        else if (kind && kind.startsWith('names:')) f[key] = r(min, max)
+        else if (key === 'eyeLid' || key === 'blush' || key === 'fringe' || key === 'noseBridge') f[key] = r(min, Math.min(max, 80))
+        else f[key] = r(Math.max(min, -60), Math.min(max, 60))
+      }
+      return f
+    }
+
+    function faceCodeOf(face) {
+      const f = normalizeFace(face)
+      const nums = [FACE_V, F_STYLE.indexOf(f.style)].concat(FACE_PARAMS.map((it) => f[it[0]]))
+      const payload = nums.join('.')
+      let b64 = ''
+      try {
+        b64 = btoa(payload).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+      } catch (e) {
+        b64 = ''
+      }
+      return 'FACE2-' + b64
+    }
+
+    function faceFromCode(code) {
+      try {
+        const raw = String(code || '').trim()
+        if (!raw.startsWith('FACE2-')) return null
+        const b64 = raw.slice(6).replace(/-/g, '+').replace(/_/g, '/')
+        const text = atob(b64 + '==='.slice((b64.length + 3) % 4))
+        const nums = text.split('.').map((x) => Number(x))
+        if (nums.length !== FACE_PARAMS.length + 2 || nums[0] !== FACE_V) return null
+        const f = zeroFace(F_STYLE[nums[1]] || 'cartoon')
+        FACE_PARAMS.forEach((it, i) => {
+          f[it[0]] = clampNum(nums[i + 2], it[3], it[4], it[2])
+        })
+        return f
+      } catch (e) {
+        return null
+      }
+    }
+
+    const FACE_PRESETS = [
+      { name: '中性', patch: {} },
+      { name: '清秀', patch: { faceWidth: -30, jaw: -40, chin: -20, eyeSize: 18, eyeSpacing: 6, browThick: -35, noseWidth: -30, mouthWidth: -18, lip: 60 } },
+      { name: '硬朗', patch: { faceWidth: 34, jaw: 55, cheek: 40, chin: 35, eyeSize: -18, browThick: 55, browTilt: -30, noseBridge: 65, mouthWidth: 22, lip: 10 } },
+      { name: '幼态', patch: { faceWidth: 22, jaw: -25, chin: -35, eyeSize: 55, eyeHeight: 20, eyeSpacing: 18, noseLength: -40, noseWidth: -35, mouthWidth: -25, blush: 70 } },
+      { name: '成熟', patch: { jaw: 22, cheek: 30, chin: 18, eyeSize: -10, eyeTilt: 20, browArch: 40, noseLength: 30, noseBridge: 40, lip: 60, eyeliner: 45 } },
+      { name: '搞怪', patch: { faceWidth: 55, jaw: -60, eyeSize: 70, eyeSpacing: 60, eyeTilt: -50, browThick: 80, noseTip: 70, mouthWidth: 60, mouthSmile: 80, hat: 2 } },
+    ]
+
+    function applyPreset(face, preset) {
+      const f = normalizeFace(face)
+      const next = Object.assign({}, f, preset.patch || {})
+      return normalizeFace(next)
+    }
+
+    /** 把参数算成一条脸型轮廓 */
+    function faceOutline(f) {
+      const cx = 100
+      const rx = 44 + f.faceWidth * 0.11 - f.cheek * 0.02
+      const top = 44 - f.forehead * 0.06
+      const cy = 104
+      const chinY = 166 + f.chin * 0.11
+      const jawW = 30 + f.jaw * 0.11 + f.cheek * 0.03
+      const jawY = 132 + f.jaw * 0.05
+      return {
+        cx, rx, top, cy, chinY, jawW, jawY,
+        d:
+          'M ' + cx + ' ' + top +
+          ' C ' + (cx + rx * 0.62) + ' ' + (top - 2) + ',' + (cx + rx) + ' ' + (cy - 32) + ',' + (cx + rx) + ' ' + (cy + 2) +
+          ' C ' + (cx + rx) + ' ' + jawY + ',' + (cx + jawW) + ' ' + (chinY - 16) + ',' + cx + ' ' + chinY +
+          ' C ' + (cx - jawW) + ' ' + (chinY - 16) + ',' + (cx - rx) + ' ' + jawY + ',' + (cx - rx) + ' ' + (cy + 2) +
+          ' C ' + (cx - rx) + ' ' + (cy - 32) + ',' + (cx - rx * 0.62) + ' ' + (top - 2) + ',' + cx + ' ' + top + ' Z',
+      }
+    }
+
+    /** 参数化脸部（纯 SVG） */
+    function FaceSVG(props) {
+      const f = normalizeFace(props.face, props.id)
+      const style = f.style
+      const real = style === 'real'
+      const size = props.size || 120
+      const angle = Math.max(-35, Math.min(35, Number(props.angle) || 0))
+      const rad = (angle * Math.PI) / 180
+      const sx = Math.max(0.3, Math.cos(rad))
+      const depth = Math.sin(rad)
+      const uid = 'f' + (props.uid || Math.abs(charHash(JSON.stringify(f))).toString(36))
+      const skin = F_SKIN[f.skinTone]
+      const skinDark = shade(skin, -18)
+      const hair = F_HAIR[f.hairColor]
+      const eyeCol = F_EYE[f.eyeColor]
+      const browCol = F_HAIR[f.browColor]
+      const outfit = F_OUTFIT[f.outfit]
+      const o = faceOutline(f)
+
+      const eyeY = o.cy + 8 + f.eyeHeight * 0.1
+      const eyeX = 21 + f.eyeSpacing * 0.1
+      const eyeRx = (real ? 6.6 : 9.6) + f.eyeSize * 0.042
+      const eyeRy = (real ? 4.6 : 7.0) + f.eyeSize * 0.028
+      const eyeTilt = f.eyeTilt * 0.09
+      const irisR = Math.min(eyeRx * 0.78, (real ? 4.2 : 6.2) + f.eyePupil * 0.008)
+      const browY = eyeY - (real ? 12 : 14) - f.browHeight * 0.08
+      const browThick = (real ? 2.0 : 2.6) + f.browThick * 0.022
+      const browW = eyeRx * 1.55
+      const noseY = eyeY + 20 + f.noseLength * 0.1
+      const noseW = 4 + f.noseWidth * 0.035
+      const mouthY = o.chinY - 20 + f.mouthHeight * 0.06
+      const mouthW = 12 + f.mouthWidth * 0.09
+      const smile = f.mouthSmile * 0.09
+      const lipFull = 2.8 + f.mouthFull * 0.035
+      const earRy = 10 + f.earSize * 0.05
+      const earTilt = f.earAngle * 0.2
+
+      const eye = (side) =>
+        h(
+          'g',
+          { transform: 'translate(' + (o.cx + side * eyeX) + ',' + eyeY + ') rotate(' + side * eyeTilt + ')' },
+          h('ellipse', { rx: eyeRx, ry: eyeRy, fill: '#fdfdfd' }),
+          h('ellipse', { cx: side * 0.6, cy: 0.4, rx: irisR, ry: irisR, fill: eyeCol }),
+          h('ellipse', { cx: side * 0.6, cy: 0.4, rx: irisR * 0.42, ry: irisR * 0.42, fill: '#16181a' }),
+          h('circle', { cx: side * 0.6 + irisR * 0.32, cy: -irisR * 0.3, r: Math.max(0.7, irisR * 0.18), fill: '#fff' }),
+          f.eyeLid > 8
+            ? h('path', {
+                d: 'M ' + -eyeRx + ' 0 Q 0 ' + -eyeRy * (1 + f.eyeLid * 0.004) + ' ' + eyeRx + ' 0',
+                fill: 'none',
+                stroke: skinDark,
+                strokeWidth: 1.4 + f.eyeLid * 0.01,
+              })
+            : null,
+          f.eyeliner > 6
+            ? h('path', {
+                d: 'M ' + -eyeRx + ' -1 Q 0 ' + -eyeRy * 1.08 + ' ' + (eyeRx + 1.6) + ' -2.4',
+                fill: 'none',
+                stroke: '#2a2320',
+                strokeWidth: 0.8 + f.eyeliner * 0.02,
+                strokeLinecap: 'round',
+              })
+            : null,
+        )
+
+      const brow = (side) =>
+        h('path', {
+          d:
+            'M ' + (o.cx + side * eyeX - browW) + ' ' + (browY + side * f.browTilt * 0.03) +
+            ' Q ' + (o.cx + side * eyeX) + ' ' + (browY - browW * 0.42 - f.browArch * 0.1) + ' ' +
+            (o.cx + side * eyeX + browW) + ' ' + (browY - 1.5),
+          fill: 'none',
+          stroke: browCol,
+          strokeWidth: browThick,
+          strokeLinecap: 'round',
+          opacity: real ? 0.92 : 1,
+        })
+
+      const hatNode =
+        f.hat === 'cap'
+          ? h('g', null,
+              h('path', { d: 'M ' + (o.cx - o.rx) + ' ' + (o.top + 8) + ' C ' + (o.cx - o.rx + 4) + ' ' + (o.top - 22) + ',' + (o.cx + o.rx - 4) + ' ' + (o.top - 22) + ',' + (o.cx + o.rx) + ' ' + (o.top + 8) + ' Z', fill: '#247bbf' }),
+              h('rect', { x: o.cx + 6, y: o.top + 4, width: o.rx + 6, height: 4.6, rx: 2.3, fill: '#1f6cab' }))
+          : f.hat === 'beanie'
+            ? h('g', null,
+                h('path', { d: 'M ' + (o.cx - o.rx) + ' ' + (o.top + 10) + ' C ' + (o.cx - o.rx + 2) + ' ' + (o.top - 26) + ',' + (o.cx + o.rx - 2) + ' ' + (o.top - 26) + ',' + (o.cx + o.rx) + ' ' + (o.top + 10) + ' Z', fill: '#d0693b' }),
+                h('rect', { x: o.cx - o.rx - 1, y: o.top + 6, width: o.rx * 2 + 2, height: 6, rx: 3, fill: '#b3572f' }),
+                h('circle', { cx: o.cx, cy: o.top - 24, r: 4, fill: '#f3d9a4' }))
+            : f.hat === 'halo'
+              ? h('ellipse', { cx: o.cx, cy: o.top - 16, rx: 16, ry: 3.6, fill: 'none', stroke: '#f4d06f', strokeWidth: 3 })
+              : null
+
+      const glassesNode =
+        f.glasses === 'round'
+          ? h('g', { fill: 'none', stroke: '#c9d6de', strokeWidth: 2, opacity: 0.9 },
+              h('circle', { cx: o.cx - eyeX, cy: eyeY, r: eyeRx + 3 }),
+              h('circle', { cx: o.cx + eyeX, cy: eyeY, r: eyeRx + 3 }),
+              h('path', { d: 'M ' + (o.cx - eyeX + eyeRx + 3) + ' ' + eyeY + ' L ' + (o.cx + eyeX - eyeRx - 3) + ' ' + eyeY }))
+          : f.glasses === 'square'
+            ? h('g', { fill: 'none', stroke: '#2a2f33', strokeWidth: 2, opacity: 0.9 },
+                h('rect', { x: o.cx - eyeX - eyeRx - 3, y: eyeY - eyeRy - 2, width: (eyeRx + 3) * 2, height: (eyeRy + 2) * 2, rx: 3 }),
+                h('rect', { x: o.cx + eyeX - eyeRx - 3, y: eyeY - eyeRy - 2, width: (eyeRx + 3) * 2, height: (eyeRy + 2) * 2, rx: 3 }),
+                h('path', { d: 'M ' + (o.cx - eyeX + eyeRx + 3) + ' ' + eyeY + ' L ' + (o.cx + eyeX - eyeRx - 3) + ' ' + eyeY }))
+            : null
+
+      const hairStyle = Number(f.hairStyle) || 0
+      const fringe = 6 + f.fringe * 0.16
+      const hairlineY = o.cy - 30 + f.fringe * 0.24
+      const backHair =
+        hairStyle === 2 || hairStyle === 7
+          ? h('path', {
+              d: 'M ' + (o.cx - o.rx - 6) + ' ' + (o.top + 10) + ' C ' + (o.cx - o.rx - 18) + ' ' + (o.cy + 40) + ',' + (o.cx - o.rx - 12) + ' ' + (o.chinY + 26) + ',' + o.cx + ' ' + (o.chinY + 30) + ' C ' + (o.cx + o.rx + 12) + ' ' + (o.chinY + 26) + ',' + (o.cx + o.rx + 18) + ' ' + (o.cy + 40) + ',' + (o.cx + o.rx + 6) + ' ' + (o.top + 10) + ' Z',
+              fill: 'url(#' + uid + 'hair)',
+            })
+          : hairStyle === 1
+            ? h('path', {
+                d: 'M ' + (o.cx - o.rx - 4) + ' ' + (o.top + 12) + ' C ' + (o.cx - o.rx - 10) + ' ' + (o.cy + 26) + ',' + (o.cx - o.rx) + ' ' + (o.chinY - 16) + ',' + o.cx + ' ' + (o.chinY - 14) + ' C ' + (o.cx + o.rx) + ' ' + (o.chinY - 16) + ',' + (o.cx + o.rx + 10) + ' ' + (o.cy + 26) + ',' + (o.cx + o.rx + 4) + ' ' + (o.top + 12) + ' Z',
+                fill: 'url(#' + uid + 'hair)',
+              })
+            : hairStyle === 3
+              ? h('path', {
+                  d: 'M ' + (o.cx + o.rx - 2) + ' ' + (o.top + 6) + ' C ' + (o.cx + o.rx + 16) + ' ' + (o.cy) + ',' + (o.cx + o.rx + 10) + ' ' + (o.chinY - 10) + ',' + (o.cx + o.rx - 8) + ' ' + (o.chinY - 18) + ' C ' + (o.cx + o.rx) + ' ' + (o.cy + 6) + ',' + (o.cx + o.rx) + ' ' + (o.top + 22) + ',' + (o.cx + o.rx - 2) + ' ' + (o.top + 6) + ' Z',
+                  fill: 'url(#' + uid + 'hair)',
+                })
+              : null
+
+      const hairCap = h(
+        'g',
+        { clipPath: 'url(#' + uid + 'headclip)' },
+        h('rect', { x: o.cx - o.rx - 2, y: o.top - 30, width: o.rx * 2 + 4, height: hairlineY - (o.top - 30), fill: 'url(#' + uid + 'hair)' }),
+        hairStyle === 5
+          ? null
+          : h('path', {
+              d: 'M ' + (o.cx - o.rx) + ' ' + (hairlineY - 10) +
+                ' C ' + (o.cx - o.rx * 0.55) + ' ' + (hairlineY + 10 + fringe * 0.2) + ',' + (o.cx - o.rx * 0.2) + ' ' + (hairlineY - 6) + ',' + o.cx + ' ' + (hairlineY - 2) +
+                ' C ' + (o.cx + o.rx * 0.25) + ' ' + (hairlineY + 8) + ',' + (o.cx + o.rx * 0.6) + ' ' + (hairlineY + 8 + fringe * 0.18) + ',' + (o.cx + o.rx) + ' ' + (hairlineY - 12) +
+                ' L ' + (o.cx + o.rx) + ' ' + (o.top - 20) + ' L ' + (o.cx - o.rx) + ' ' + (o.top - 20) + ' Z',
+              fill: 'url(#' + uid + 'hair)',
+            }),
+      )
+
+      const bodyW = 40 + f.build * 0.14
+      const bodyNode = h(
+        'g',
+        null,
+        h('rect', { x: o.cx - 12, y: o.chinY - 10, width: 24, height: 34, rx: 8, fill: skinDark }),
+        h('path', {
+          d: 'M ' + (o.cx - bodyW) + ' 280 C ' + (o.cx - bodyW + 2) + ' ' + (o.chinY + 26) + ',' + (o.cx - 20) + ' ' + (o.chinY + 16) + ',' + o.cx + ' ' + (o.chinY + 16) +
+            ' C ' + (o.cx + 20) + ' ' + (o.chinY + 16) + ',' + (o.cx + bodyW - 2) + ' ' + (o.chinY + 26) + ',' + (o.cx + bodyW) + ' 280 Z',
+          fill: outfit,
+        }),
+        h('path', { d: 'M ' + (o.cx - 11) + ' ' + (o.chinY + 15) + ' L ' + o.cx + ' ' + (o.chinY + 30) + ' L ' + (o.cx + 11) + ' ' + (o.chinY + 15) + ' Z', fill: shade(outfit, 22), opacity: 0.85 }),
+      )
+
+      return h(
+        'svg',
+        { className: 'sc-char-svg', width: size, height: Math.round(size * 1.4), viewBox: '0 0 200 280', role: 'img', 'aria-label': 'character' },
+        h(
+          'defs',
+          null,
+          h('radialGradient', { id: uid + 'sh', cx: '38%', cy: '30%', r: '72%' },
+            h('stop', { offset: '0%', stopColor: '#ffffff', stopOpacity: real ? 0.20 : 0.14 }),
+            h('stop', { offset: '62%', stopColor: '#ffffff', stopOpacity: 0 }),
+            h('stop', { offset: '100%', stopColor: '#000000', stopOpacity: real ? 0.24 : 0.16 })),
+          h('linearGradient', { id: uid + 'hair', x1: '0', y1: '0', x2: '0', y2: '1' },
+            h('stop', { offset: '0%', stopColor: shade(hair, 16) }),
+            h('stop', { offset: '100%', stopColor: shade(hair, -14) })),
+          h('clipPath', { id: uid + 'headclip' }, h('path', { d: o.d })),
+        ),
+        h(
+          'g',
+          { transform: 'translate(100,0) scale(' + sx + ',1) translate(-100,0)' },
+          bodyNode,
+          backHair,
+          h('ellipse', { cx: o.cx, cy: o.chinY + 4, rx: o.jawW * 0.9, ry: 12, fill: '#000', opacity: 0.10 }),
+          h('path', { d: o.d, fill: skin }),
+          h('path', { d: o.d, fill: 'url(#' + uid + 'sh)' }),
+          hairCap,
+          real
+            ? h('g', null,
+                h('ellipse', { cx: o.cx - eyeX, cy: eyeY - 2, rx: eyeRx * 1.5, ry: eyeRy * 1.6, fill: '#000', opacity: 0.06 }),
+                h('ellipse', { cx: o.cx + eyeX, cy: eyeY - 2, rx: eyeRx * 1.5, ry: eyeRy * 1.6, fill: '#000', opacity: 0.06 }),
+                h('ellipse', { cx: o.cx - o.rx * 0.55, cy: o.cy + 30, rx: 12, ry: 8, fill: '#000', opacity: 0.05 }),
+                h('ellipse', { cx: o.cx + o.rx * 0.55, cy: o.cy + 30, rx: 12, ry: 8, fill: '#000', opacity: 0.05 }),
+                h('path', { d: 'M ' + (o.cx - noseW - 0.5) + ' ' + (noseY - 12) + ' Q ' + (o.cx - noseW - 3) + ' ' + (noseY + 2) + ' ' + (o.cx - noseW) + ' ' + (noseY + 5), fill: 'none', stroke: '#000', strokeWidth: 1.6, opacity: 0.08 }),
+                h('path', { d: 'M ' + (o.cx + noseW + 0.5) + ' ' + (noseY - 12) + ' Q ' + (o.cx + noseW + 3) + ' ' + (noseY + 2) + ' ' + (o.cx + noseW) + ' ' + (noseY + 5), fill: 'none', stroke: '#000', strokeWidth: 1.6, opacity: 0.08 }))
+            : null,
+          h('ellipse', { cx: o.cx - o.rx * 0.62, cy: o.cy + 18, rx: 10, ry: 6, fill: '#e2735f', opacity: f.blush / 100 * 0.28 }),
+          h('ellipse', { cx: o.cx + o.rx * 0.62, cy: o.cy + 18, rx: 10, ry: 6, fill: '#e2735f', opacity: f.blush / 100 * 0.28 }),
+          h('ellipse', { cx: o.cx - o.rx, cy: o.cy + 12, rx: 6, ry: earRy, fill: skin, transform: 'rotate(' + (-earTilt) + ' ' + (o.cx - o.rx) + ' ' + (o.cy + 12) + ')' }),
+          h('ellipse', { cx: o.cx + o.rx, cy: o.cy + 12, rx: 6, ry: earRy, fill: skin, transform: 'rotate(' + earTilt + ' ' + (o.cx + o.rx) + ' ' + (o.cy + 12) + ')' }),
+          f.earring === 'dot' ? h('circle', { cx: o.cx + o.rx + 1, cy: o.cy + 24, r: 2.6, fill: '#f4d06f' }) : null,
+          h('path', { d: 'M ' + (o.cx - noseW) + ' ' + (noseY + 4) + ' Q ' + o.cx + ' ' + (noseY + 9) + ' ' + (o.cx + noseW) + ' ' + (noseY + 4), fill: 'none', stroke: skinDark, strokeWidth: real ? 1.8 : 1.4, opacity: 0.75, strokeLinecap: 'round' }),
+          f.noseBridge > 10 ? h('rect', { x: o.cx - 1.6, y: noseY - 16, width: 3.2, height: 16, rx: 1.6, fill: '#fff', opacity: f.noseBridge / 100 * 0.22 }) : null,
+          h('path', {
+            d: 'M ' + (o.cx - mouthW) + ' ' + mouthY + ' Q ' + o.cx + ' ' + (mouthY + lipFull + smile) + ' ' + (o.cx + mouthW) + ' ' + mouthY,
+            fill: 'none',
+            stroke: lipColor(f.lip),
+            strokeWidth: lipFull,
+            strokeLinecap: 'round',
+          }),
+          eye(-1),
+          eye(1),
+          brow(-1),
+          brow(1),
+          hatNode,
+          glassesNode,
+        ),
+      )
+    }
+
+    const C_HAIR = ['#3d4c8c', '#2b3560', '#5b6bb0', '#8a5a3c', '#d9b25f', '#b04a63', '#7a5aa8', '#4a8b8f']
+    const C_EYE = ['#4a63b0', '#2f7a6a', '#8a4a7a', '#5a4a3a', '#3d5a80', '#7a5a2f']
+    const C_OUTFIT = ['#2f3a63', '#eef2fb', '#7fb3e0', '#63c2b0', '#d98aa0', '#c9a227', '#8a5ec9', '#d0693b']
+
+    /** Q 版鲸鱼娘：厚描边 + 大眼 + 圆润剪影 */
+    function ChibiFace(props) {
+      const f = normalizeFace(props.face, props.id)
+      const size = props.size || 120
+      const angle = Math.max(-28, Math.min(28, Number(props.angle) || 0))
+      const rad = (angle * Math.PI) / 180
+      const sx = Math.max(0.5, Math.cos(rad))
+      const uid = 'c' + (props.uid || Math.abs(charHash(JSON.stringify(f))).toString(36))
+      const ink = '#252b45'
+      const hair = C_HAIR[f.hairColor % C_HAIR.length]
+      const hairLo = shade(hair, -14)
+      const hairHi = shade(hair, 42)
+      const skin = F_SKIN[f.skinTone]
+      const skinLo = shade(skin, -14)
+      const outfit = C_OUTFIT[f.outfit % C_OUTFIT.length]
+      const iris = C_EYE[f.eyeColor % C_EYE.length]
+
+      const cx = 120
+      const cy = 128
+      const rx = 64 + f.faceWidth * 0.07 + f.cheek * 0.02
+      const ry = 66 + f.chin * 0.03
+      const eyeScale = 1 + f.eyeSize * 0.0045
+      const eyeX = 29 + f.eyeSpacing * 0.07
+      const eyeY = cy + 22 + f.eyeHeight * 0.06
+      const eyeRx = 17 * eyeScale
+      const eyeRy = 19.5 * eyeScale
+      const tilt = f.eyeTilt * 0.1
+      const mouthY = cy + 52 + f.mouthHeight * 0.03
+      const smile = f.mouthSmile * 0.05
+      const hairStyle = Number(f.hairStyle) || 0
+      const hat = f.hat
+
+      const eye = (side) =>
+        h(
+          'g',
+          { transform: 'translate(' + (cx + side * eyeX) + ',' + eyeY + ') rotate(' + side * tilt + ')' },
+          h('ellipse', { rx: eyeRx + 1.2, ry: eyeRy + 1.2, fill: '#fdfeff', stroke: ink, strokeWidth: 1.3 }),
+          h('ellipse', { rx: eyeRx * 0.92, ry: eyeRy * 0.93, fill: 'url(#' + uid + 'iris)' }),
+          h('ellipse', { cx: 0, cy: eyeRy * 0.12, rx: eyeRx * 0.48, ry: eyeRy * 0.5, fill: '#1b2140' }),
+          h('ellipse', { cx: -eyeRx * 0.22, cy: -eyeRy * 0.4, rx: eyeRx * 0.36, ry: eyeRy * 0.24, fill: '#eaf6ff', opacity: 0.95 }),
+          h('circle', { cx: -eyeRx * 0.46, cy: -eyeRy * 0.04, r: eyeRx * 0.19, fill: '#ffffff' }),
+          h('circle', { cx: eyeRx * 0.32, cy: eyeRy * 0.44, r: eyeRx * 0.12, fill: '#ffffff', opacity: 0.9 }),
+          h('circle', { cx: eyeRx * 0.46, cy: -eyeRy * 0.48, r: eyeRx * 0.07, fill: '#ffffff', opacity: 0.7 }),
+          h('path', {
+            d: 'M ' + -eyeRx * 1.14 + ' ' + -eyeRy * 0.3 + ' Q 0 ' + -eyeRy * 1.16 + ' ' + eyeRx * 1.14 + ' ' + -eyeRy * 0.18,
+            fill: 'none',
+            stroke: ink,
+            strokeWidth: 4.2 - f.eyeLid * 0.008,
+            strokeLinecap: 'round',
+          }),
+          h('path', {
+            d: 'M ' + eyeRx * 0.88 + ' ' + -eyeRy * 0.46 + ' q 5 -5 8 -9',
+            fill: 'none',
+            stroke: ink,
+            strokeWidth: 2.6,
+            strokeLinecap: 'round',
+          }),
+          f.eyeliner > 25
+            ? h('path', {
+                d: 'M ' + -eyeRx * 1.0 + ' ' + eyeRy * 0.84 + ' Q 0 ' + eyeRy * 1.12 + ' ' + eyeRx * 0.96 + ' ' + eyeRy * 0.68,
+                fill: 'none',
+                stroke: ink,
+                strokeWidth: 1.5,
+                opacity: 0.38,
+                strokeLinecap: 'round',
+              })
+            : null,
+        )
+
+      // 后发：一整块圆润的披发，到肩部收住
+      const backHair = h('path', {
+        d:
+          'M ' + (cx - rx - 4) + ' ' + (cy - 18) +
+          ' C ' + (cx - rx - 16) + ' ' + (cy + 50) + ' ' + (cx - rx - 12) + ' ' + (cy + 100) + ' ' + (cx - rx + 6) + ' ' + (cy + (hairStyle === 5 ? 96 : 128)) +
+          ' C ' + (cx - 24) + ' ' + (cy + (hairStyle === 5 ? 68 : 102)) + ' ' + (cx + 24) + ' ' + (cy + (hairStyle === 5 ? 68 : 102)) + ' ' + (cx + rx - 8) + ' ' + (cy + (hairStyle === 5 ? 60 : 92)) +
+          ' C ' + (cx + rx + 10) + ' ' + (cy + 76) + ' ' + (cx + rx + 16) + ' ' + (cy + 50) + ' ' + (cx + rx + 4) + ' ' + (cy - 18) +
+          ' C ' + (cx + 40) + ' ' + (cy - ry - 22) + ' ' + (cx - 40) + ' ' + (cy - ry - 22) + ' ' + (cx - rx - 4) + ' ' + (cy - 18) + ' Z',
+        fill: hairLo,
+        stroke: ink,
+        strokeWidth: 3.4,
+        strokeLinejoin: 'round',
+      })
+
+      const twinTails =
+        hairStyle === 2 || hairStyle === 7
+          ? h('g', null,
+              h('path', { d: 'M ' + (cx - rx + 2) + ' ' + (cy + 4) + ' C ' + (cx - rx - 30) + ' ' + (cy + 50) + ' ' + (cx - rx - 24) + ' ' + (cy + 110) + ' ' + (cx - rx + 4) + ' ' + (cy + 136) + ' C ' + (cx - rx + 2) + ' ' + (cy + 90) + ' ' + (cx - rx + 8) + ' ' + (cy + 44) + ' ' + (cx - rx + 22) + ' ' + (cy + 2) + ' Z', fill: hair, stroke: ink, strokeWidth: 3.2, strokeLinejoin: 'round' }),
+              h('path', { d: 'M ' + (cx + rx - 2) + ' ' + (cy + 4) + ' C ' + (cx + rx + 30) + ' ' + (cy + 50) + ' ' + (cx + rx + 24) + ' ' + (cy + 110) + ' ' + (cx + rx - 4) + ' ' + (cy + 136) + ' C ' + (cx + rx - 2) + ' ' + (cy + 90) + ' ' + (cx + rx - 8) + ' ' + (cy + 44) + ' ' + (cx + rx - 22) + ' ' + (cy + 2) + ' Z', fill: hair, stroke: ink, strokeWidth: 3.2, strokeLinejoin: 'round' }))
+          : null
+
+      const fin = (side) =>
+        h(
+          'g',
+          { transform: 'translate(' + (cx + side * (rx + 2)) + ',' + (cy + 34) + ') scale(' + side + ',1) rotate(10)' },
+          h('path', {
+            d: 'M 0 0 C 12 -9 26 -2 30 12 C 21 16 9 12 0 5 Z',
+            fill: hairHi,
+            stroke: ink,
+            strokeWidth: 2.8,
+            strokeLinejoin: 'round',
+          }),
+        )
+
+      const head = h('ellipse', { cx: cx, cy: cy, rx: rx, ry: ry, fill: skin, stroke: ink, strokeWidth: 3.4 })
+
+      // 刘海：柔和波浪
+      const bangs = h(
+        'g',
+        null,
+        h('path', {
+          d:
+            'M ' + (cx - rx - 2) + ' ' + (cy - 10) +
+            ' C ' + (cx - rx - 12) + ' ' + (cy - ry - 16) + ' ' + (cx + rx + 12) + ' ' + (cy - ry - 16) + ' ' + (cx + rx + 2) + ' ' + (cy - 10) +
+            ' Q ' + (cx + rx * 0.82) + ' ' + (cy - 4) + ' ' + (cx + rx * 0.66) + ' ' + (cy - 18) +
+            ' Q ' + (cx + rx * 0.48) + ' ' + (cy - 30) + ' ' + (cx + rx * 0.3) + ' ' + (cy - 16) +
+            ' Q ' + (cx + rx * 0.12) + ' ' + (cy - 4) + ' ' + (cx - rx * 0.06) + ' ' + (cy - 18) +
+            ' Q ' + (cx - rx * 0.24) + ' ' + (cy - 30) + ' ' + (cx - rx * 0.42) + ' ' + (cy - 16) +
+            ' Q ' + (cx - rx * 0.6) + ' ' + (cy - 4) + ' ' + (cx - rx * 0.76) + ' ' + (cy - 18) +
+            ' Q ' + (cx - rx * 0.9) + ' ' + (cy - 26) + ' ' + (cx - rx - 2) + ' ' + (cy - 10) + ' Z',
+          fill: hair,
+          stroke: ink,
+          strokeWidth: 3.2,
+          strokeLinejoin: 'round',
+        }),
+        h('path', { d: 'M ' + (cx - rx * 0.34) + ' ' + (cy - ry + 8) + ' q 18 -8 34 -2 q -16 10 -34 2 Z', fill: hairHi, opacity: 0.9 }),
+        h('path', { d: 'M ' + (cx + 8) + ' ' + (cy - ry + 4) + ' q 22 -5 34 5 q -20 6 -34 -5 Z', fill: hairHi, opacity: 0.75 }),
+        h('path', { d: 'M ' + (cx - rx * 0.8) + ' ' + (cy - ry + 24) + ' q 13 -6 23 0 q -13 8 -23 0 Z', fill: hairHi, opacity: 0.55 }),
+      )
+
+      const sideLock = (side) =>
+        h('path', {
+          d: 'M ' + (cx + side * (rx - 3)) + ' ' + (cy - 16) +
+            ' C ' + (cx + side * (rx + 13)) + ' ' + (cy + 34) + ' ' + (cx + side * (rx + 9)) + ' ' + (cy + 74) + ' ' + (cx + side * (rx - 2)) + ' ' + (cy + 96) +
+            ' C ' + (cx + side * (rx - 5)) + ' ' + (cy + 58) + ' ' + (cx + side * (rx - 8)) + ' ' + (cy + 18) + ' ' + (cx + side * (rx - 10)) + ' ' + (cy - 16) + ' Z',
+          fill: hair,
+          stroke: ink,
+          strokeWidth: 3.2,
+          strokeLinejoin: 'round',
+        })
+
+      const ahoge = h('path', {
+        d: 'M ' + (cx - 2) + ' ' + (cy - ry - 6) + ' C ' + (cx + 8) + ' ' + (cy - ry - 34) + ' ' + (cx + 38) + ' ' + (cy - ry - 38) + ' ' + (cx + 44) + ' ' + (cy - ry - 18) + ' C ' + (cx + 36) + ' ' + (cy - ry - 28) + ' ' + (cx + 14) + ' ' + (cy - ry - 16) + ' ' + (cx + 8) + ' ' + (cy - ry + 2) + ' Z',
+        fill: hair,
+        stroke: ink,
+        strokeWidth: 2.8,
+        strokeLinejoin: 'round',
+      })
+
+      // 女仆头饰：一排白色小花边
+      const frill =
+        hat === 'cap'
+          ? h('g', null,
+              h('path', {
+                d: 'M ' + (cx - 54) + ' ' + (cy - ry + 22) + ' C ' + (cx - 40) + ' ' + (cy - ry - 14) + ' ' + (cx + 40) + ' ' + (cy - ry - 14) + ' ' + (cx + 54) + ' ' + (cy - ry + 22),
+                fill: 'none', stroke: '#ffffff', strokeWidth: 12, strokeLinecap: 'round',
+              }),
+              h('g', { fill: '#ffffff', stroke: '#dbe4f5', strokeWidth: 1.6 },
+                [-46, -30, -14, 2, 18, 34, 46].map((dx, i) =>
+                  h('circle', { key: i, cx: cx + dx, cy: cy - ry + 8 + Math.abs(dx) * 0.28, r: 6.4 }))))
+          : hat === 'beanie'
+            ? h('path', {
+                d: 'M ' + (cx - 54) + ' ' + (cy - ry + 20) + ' C ' + (cx - 46) + ' ' + (cy - ry - 28) + ' ' + (cx + 46) + ' ' + (cy - ry - 28) + ' ' + (cx + 54) + ' ' + (cy - ry + 20) + ' Z',
+                fill: '#7fb3e0', stroke: ink, strokeWidth: 3.2,
+              })
+            : hat === 'halo'
+              ? h('ellipse', { cx: cx, cy: cy - ry - 22, rx: 22, ry: 5, fill: 'none', stroke: '#f4d06f', strokeWidth: 4 })
+              : null
+
+      const bowAtSide = h('g', { transform: 'translate(' + (cx + rx - 10) + ',' + (cy + 2) + ')' },
+        h('path', { d: 'M 0 0 C -11 -9 -20 -6 -20 2 C -20 10 -11 11 0 0 Z', fill: '#8fc0ea', stroke: ink, strokeWidth: 2.4, strokeLinejoin: 'round' }),
+        h('path', { d: 'M 0 0 C 11 -9 20 -6 20 2 C 20 10 11 11 0 0 Z', fill: '#8fc0ea', stroke: ink, strokeWidth: 2.4, strokeLinejoin: 'round' }),
+        h('circle', { cx: 0, cy: 1, r: 4, fill: '#5a86c9', stroke: ink, strokeWidth: 1.8 }))
+
+      const bodyTop = cy + ry + 6
+      const neck = h('rect', { x: cx - 12, y: cy + ry - 12, width: 24, height: 24, rx: 8, fill: skin, stroke: ink, strokeWidth: 2.8 })
+      const body = h('g', null,
+        h('path', {
+          d: 'M ' + (cx - 52 - f.build * 0.1) + ' 300 C ' + (cx - 50) + ' ' + (bodyTop + 16) + ' ' + (cx - 34) + ' ' + (bodyTop - 2) + ' ' + cx + ' ' + (bodyTop - 2) +
+            ' C ' + (cx + 34) + ' ' + (bodyTop - 2) + ' ' + (cx + 50) + ' ' + (bodyTop + 16) + ' ' + (cx + 52 + f.build * 0.1) + ' 300 Z',
+          fill: outfit,
+          stroke: ink,
+          strokeWidth: 3.4,
+        }),
+        h('path', {
+          d: 'M ' + (cx - 20) + ' ' + bodyTop + ' L ' + cx + ' ' + (bodyTop + 28) + ' L ' + (cx + 20) + ' ' + bodyTop +
+            ' C ' + (cx + 11) + ' ' + (bodyTop - 6) + ' ' + (cx - 11) + ' ' + (bodyTop - 6) + ' ' + (cx - 20) + ' ' + bodyTop + ' Z',
+          fill: '#f7f9ff', stroke: ink, strokeWidth: 2.4, strokeLinejoin: 'round',
+        }),
+        h('path', { d: 'M ' + (cx - 8) + ' ' + (bodyTop + 6) + ' L ' + cx + ' ' + (bodyTop + 20) + ' L ' + (cx + 8) + ' ' + (bodyTop + 6) + ' L ' + cx + ' ' + (bodyTop + 12) + ' Z', fill: '#2b3350' }),
+        h('circle', { cx: cx, cy: bodyTop + 26, r: 3.4, fill: '#9fd0ff', stroke: ink, strokeWidth: 1.6 }),
+        h('rect', { x: cx - 60, y: bodyTop + 22, width: 14, height: 40, rx: 7, fill: outfit, stroke: ink, strokeWidth: 3, transform: 'rotate(8 ' + (cx - 53) + ' ' + (bodyTop + 42) + ')' }),
+        h('rect', { x: cx + 46, y: bodyTop + 22, width: 14, height: 40, rx: 7, fill: outfit, stroke: ink, strokeWidth: 3, transform: 'rotate(-8 ' + (cx + 53) + ' ' + (bodyTop + 42) + ')' }),
+      )
+
+      const browY = eyeY - 28 - f.browHeight * 0.04
+      return h(
+        'svg',
+        { className: 'sc-char-svg', width: size, height: Math.round(size * 1.25), viewBox: '0 0 240 300', role: 'img', 'aria-label': 'character' },
+        h(
+          'defs',
+          null,
+          h('linearGradient', { id: uid + 'iris', x1: '0', y1: '0', x2: '0', y2: '1' },
+            h('stop', { offset: '0%', stopColor: shade(iris, 46) }),
+            h('stop', { offset: '58%', stopColor: iris }),
+            h('stop', { offset: '100%', stopColor: shade(iris, -26) })),
+        ),
+        h(
+          'g',
+          { transform: 'translate(120,0) scale(' + sx + ',1) translate(-120,0)' },
+          twinTails,
+          backHair,
+          body,
+          neck,
+          head,
+          ahoge,
+          h('ellipse', { cx: cx - eyeX - 8, cy: eyeY + 24, rx: 12, ry: 6.5, fill: '#ff9aa8', opacity: f.blush / 100 * 0.5 }),
+          h('ellipse', { cx: cx + eyeX + 8, cy: eyeY + 24, rx: 12, ry: 6.5, fill: '#ff9aa8', opacity: f.blush / 100 * 0.5 }),
+          eye(-1),
+          eye(1),
+          h('ellipse', { cx: cx, cy: mouthY - 9, rx: 3.6, ry: 2.2, fill: skinLo, opacity: 0.45 }),
+          h('path', {
+            d: 'M ' + (cx - 7) + ' ' + mouthY + ' Q ' + (cx - 3.5) + ' ' + (mouthY + 4 + smile) + ' ' + cx + ' ' + mouthY + ' Q ' + (cx + 3.5) + ' ' + (mouthY + 4 + smile) + ' ' + (cx + 7) + ' ' + mouthY,
+            fill: 'none', stroke: '#b8564f', strokeWidth: 2.4, strokeLinecap: 'round',
+          }),
+          bangs,
+          sideLock(-1),
+          sideLock(1),
+          frill,
+          bowAtSide,
+          fin(-1),
+          fin(1),
+          f.earring === 'dot' ? h('circle', { cx: cx + rx + 6, cy: eyeY + 24, r: 2.6, fill: '#f4d06f', stroke: ink, strokeWidth: 1.3 }) : null,
+        ),
+      )
+    }
+
+    /** 按画风选渲染器：cartoon = Q 版鲸鱼娘，real = 半写实 */
+    function FaceRender(props) {
+      const f = normalizeFace(props.face, props.id)
+      return f.style === 'real' ? h(FaceSVG, props) : h(ChibiFace, Object.assign({}, props, { face: f }))
+    }
+
+    function lipColor(v) {
+      const t = Math.max(0, Math.min(100, Number(v) || 0)) / 100
+      const a = [214, 120, 112]
+      const b = [150, 52, 66]
+      const c = a.map((x, i) => Math.round(x + (b[i] - x) * t))
+      return 'rgb(' + c.join(',') + ')'
+    }
+
+    function shade(hex, amount) {
+      const m = /^#([0-9a-f]{6})$/i.exec(String(hex || ''))
+      if (!m) return hex
+      const n = parseInt(m[1], 16)
+      const f = (v) => Math.max(0, Math.min(255, v + amount))
+      return '#' + [f((n >> 16) & 255), f((n >> 8) & 255), f(n & 255)].map((v) => v.toString(16).padStart(2, '0')).join('')
     }
 
     // ───────────────────────── 会议 ─────────────────────────
@@ -2059,6 +4017,16 @@ window.__ModuleLoader__.load({
     function SocialView(props) {
       const [auth, setAuth] = useState(() => readJson(K_AUTH))
       const [gameOpen, setGameOpen] = useState(false)
+      const rootRef = useRef(null)
+
+      useEffect(() => {
+        const el = rootRef.current
+        if (!el) return
+        adaptSurfaceTokens(el)
+        // 主题切换/面板尺寸变化后再校一次
+        const timer = window.setTimeout(() => adaptSurfaceTokens(el), 400)
+        return () => window.clearTimeout(timer)
+      }, [])
 
       const body = !auth
         ? h(LoginPanel, { onDone: (next) => setAuth(next) })
@@ -2077,7 +4045,7 @@ window.__ModuleLoader__.load({
 
       return h(
         'div',
-        { className: 'sc-root' },
+        { className: 'sc-root', ref: rootRef },
         canShare && auth ? h(Boundary, null, h(ShareBar, { chatProps: props, auth })) : null,
         h('div', { style: { flex: 1, minHeight: 0, display: 'flex' } }, body),
         gameOpen ? h(GameWindow, { onClose: () => setGameOpen(false) }) : null,

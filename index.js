@@ -12,6 +12,8 @@
  *     不会把已经能用的聊天一起拖下水。
  */
 
+import { randomBytes } from 'node:crypto'
+
 const PREFIX = '/api/share-chat'
 
 function json(status, body) {
@@ -165,6 +167,190 @@ export function apply(ctx) {
           },
         }),
       'share-chat: transcript route',
+    )
+  })
+
+  // ── 营地：采集本机插件清单（给「串门」发布用，只读）──
+  ctx.inject(['webServer', 'pluginManager'], (scope) => {
+    scope.effect(
+      () =>
+        scope.webServer.register({
+          path: PREFIX + '/camp/collect',
+          kind: 'exact',
+          resource: async () => {
+            if (!isLoopbackOrigin(scope)) return json(403, { error: 'not-loopback' })
+            try {
+              const raw = await scope.pluginManager.listBundles()
+              const list = Array.isArray(raw) ? raw : raw && Array.isArray(raw.entries) ? raw.entries : []
+              const plugins = list
+                .map((b) => {
+                  const name = String((b && b.name) || '')
+                  const spec = String((b && b.source) || '')
+                  // 本地路径来源不能分享：别人装不了，也不该知道你的磁盘布局
+                  if (/^(file|link):/i.test(spec)) return null
+                  const builtin = !spec
+                  const source = spec.startsWith('git+') ? 'git' : builtin ? 'builtin' : 'npm'
+                  return {
+                    name,
+                    version: String((b && b.version) || ''),
+                    spec,
+                    source,
+                    builtin,
+                    enabled: !!(b && b.enabled),
+                  }
+                })
+                .filter((p) => p && p.name)
+              return json(200, { collectedAt: Date.now(), plugins })
+            } catch (e) {
+              return json(500, { error: String((e && e.message) || e) })
+            }
+          },
+        }),
+      'share-chat: camp collect route',
+    )
+  })
+
+  // ── 营地：复刻（装插件 / 撤销），仅本机 + 一次性 nonce ──
+  ctx.inject(['webServer', 'pluginManager'], (scope) => {
+    let nonceValue = ''
+    let nonceExpires = 0
+
+    /** 只放行 npm 精确版本、pinned git、https tgz；本地路径一律拒绝 */
+    const okSpec = (spec) => {
+      const v = String(spec || '').trim()
+      if (!v || /^(file|link):/i.test(v)) return false
+      if (/^git\+https?:\/\/[^\s#]+#[0-9a-f]{40}$/i.test(v)) return true
+      if (/^https:\/\/[^\s?#]+\.tgz$/i.test(v)) return true
+      if (/^(@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*@[0-9][0-9A-Za-z.+-]*$/i.test(v)) return true
+      return false
+    }
+
+    /** handler 是 node 风格：resource 只接 GET/HEAD，POST 必须用 handler */
+    const sendJson = (res, status, body) => {
+      const text = JSON.stringify(body)
+      res.writeHead(status, {
+        'content-type': 'application/json; charset=utf-8',
+        'cache-control': 'no-store',
+      })
+      res.end(text)
+    }
+
+    const readJsonBody = (req) =>
+      new Promise((resolve) => {
+        let size = 0
+        const chunks = []
+        req.on('data', (c) => {
+          size += c.length
+          if (size > 256 * 1024) {
+            resolve(null)
+            req.destroy()
+            return
+          }
+          chunks.push(c)
+        })
+        req.on('end', () => {
+          try {
+            resolve(JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'))
+          } catch {
+            resolve(null)
+          }
+        })
+        req.on('error', () => resolve(null))
+      })
+
+    scope.effect(
+      () =>
+        scope.webServer.register({
+          path: PREFIX + '/camp/nonce',
+          kind: 'exact',
+          resource: async () => {
+            if (!isLoopbackOrigin(scope)) return json(403, { error: 'not-loopback' })
+            nonceValue = randomBytes(16).toString('hex')
+            nonceExpires = Date.now() + 5 * 60 * 1000
+            return json(200, { nonce: nonceValue, expiresAt: nonceExpires })
+          },
+        }),
+      'share-chat: camp nonce route',
+    )
+
+    scope.effect(
+      () =>
+        scope.webServer.register({
+          path: PREFIX + '/camp/apply',
+          kind: 'exact',
+          handler: async (req, res) => {
+            if (req.method !== 'POST') return sendJson(res, 405, { error: 'method', allow: 'POST' })
+            if (!isLoopbackOrigin(scope)) return sendJson(res, 403, { error: 'not-loopback' })
+            const body = await readJsonBody(req)
+            if (!body) return sendJson(res, 400, { error: 'bad-json' })
+            const token = String(body.nonce || '')
+            if (!nonceValue || token !== nonceValue || Date.now() > nonceExpires) {
+              return sendJson(res, 403, { error: 'bad-nonce' })
+            }
+            nonceValue = ''
+            const items = Array.isArray(body.specs) ? body.specs.slice(0, 12) : []
+            const results = []
+            for (const item of items) {
+              const spec = String((item && item.spec) || '')
+              if (!okSpec(spec)) {
+                results.push({ spec, ok: false, error: 'bad-spec' })
+                continue
+              }
+              try {
+                const r = await scope.pluginManager.installBundle(spec, { saveExact: true, enabled: true })
+                const application = String((r && r.application) || '')
+                const ok = application !== 'failed' && application !== 'cancelled'
+                const failure = r && r.error
+                const detail = failure
+                  ? String(failure.diagnostic || failure.message || failure.code || failure)
+                  : 'install-failed'
+                results.push({
+                  spec,
+                  ok,
+                  bundle: String((r && r.bundle) || spec.replace(/@[^@]*$/, '')),
+                  version: String((r && r.version) || ''),
+                  application,
+                  error: ok ? '' : detail,
+                })
+              } catch (e) {
+                results.push({ spec, ok: false, error: String((e && e.message) || e) })
+              }
+            }
+            return sendJson(res, 200, { results })
+          },
+        }),
+      'share-chat: camp apply route',
+    )
+
+    scope.effect(
+      () =>
+        scope.webServer.register({
+          path: PREFIX + '/camp/remove',
+          kind: 'exact',
+          handler: async (req, res) => {
+            if (req.method !== 'POST') return sendJson(res, 405, { error: 'method', allow: 'POST' })
+            if (!isLoopbackOrigin(scope)) return sendJson(res, 403, { error: 'not-loopback' })
+            const body = await readJsonBody(req)
+            if (!body) return sendJson(res, 400, { error: 'bad-json' })
+            const targets = Array.isArray(body.targets) ? body.targets.slice(0, 12) : []
+            const results = []
+            for (const t of targets) {
+              const name = String(t || '')
+              if (!name || /\s/.test(name)) {
+                results.push({ name, ok: false, error: 'bad-name' })
+                continue
+              }
+              try {
+                const r = await scope.pluginManager.removeBundle(name)
+                results.push({ name, ok: true, application: String((r && r.application) || '') })
+              } catch (e) {
+                results.push({ name, ok: false, error: String((e && e.message) || e) })
+              }
+            }
+            return sendJson(res, 200, { results })
+          },
+        }),
+      'share-chat: camp remove route',
     )
   })
 }

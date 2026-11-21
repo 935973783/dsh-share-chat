@@ -1,6 +1,6 @@
 {
   "name": "dsh-share-chat",
-  "version": "0.3.3",
+  "version": "0.9.0",
   "type": "module",
   "license": "MIT",
   "keywords": [
@@ -11,14 +11,9 @@
     "snapshot",
     "minigame",
     "meeting",
-    "webrtc"
+    "camp"
   ],
-  "description": "Social chat, calls and shared session snapshots inside the DSH conversation view, with an embedded fish-game mini game.",
-  "repository": {
-    "type": "git",
-    "url": "git+https://gitee.com/laughing-faith/dsh-share-chat.git"
-  },
-  "homepage": "https://gitee.com/laughing-faith/dsh-share-chat#readme",
+  "description": "Social chat, calls, camps and shared session snapshots inside the DSH conversation view.",
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
@@ -31,9 +26,7 @@
     "cordis.patch.yml",
     "locale/*.json",
     "docs",
-    "cli",
     "README.md",
-    "CHANGELOG.md",
     "LICENSE",
     "icon.svg"
   ],
@@ -48,5 +41,10 @@
         "@deepseek-ai/dsh-client-ui-conversation"
       ]
     }
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://gitee.com/laughing-faith/dsh-share-chat.git"
+  },
+  "homepage": "https://gitee.com/laughing-faith/dsh-share-chat#readme"
 }
