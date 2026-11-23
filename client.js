@@ -1663,7 +1663,7 @@ window.__ModuleLoader__.load({
             'div',
             { style: { minWidth: 0 } },
             h('div', { className: 'sc-chat-name' }, '@' + (auth.displayName || auth.id)),
-            h('div', { className: 'sc-chat-sub' }, auth.server.replace(/^https?:\/\//, '')),
+            h('div', { className: 'sc-chat-sub' }, '在线'),
           ),
           h('span', { className: 'sc-grow' }),
           err
@@ -1743,6 +1743,24 @@ window.__ModuleLoader__.load({
               title: '开一桌麻将（缺的位置机器人补）',
             },
             '🀄 麻将',
+          ),
+          h(
+            'button',
+            {
+              className: 'sc-btn',
+              onClick: () => openAvalon({ auth, onToast: (m) => setErr(m) }),
+              title: '阿瓦隆（5-10 人，缺的位置机器人补）',
+            },
+            '🏰 阿瓦隆',
+          ),
+          h(
+            'button',
+            {
+              className: 'sc-btn',
+              onClick: () => openMobilePreview({ auth, onToast: (m) => setErr(m) }),
+              title: '手机浏览器预览（开发用）',
+            },
+            '📱 预览',
           ),
           h(
             'button',
@@ -4413,6 +4431,8 @@ window.__ModuleLoader__.load({
      */
     const MEET_ICE = [
       { urls: ['stun:stun.cloudflare.com:3478', 'stun:stun.l.google.com:19302'] },
+      { urls: 'turn:152.136.125.55:3478?transport=udp', username: 'dsh', credential: 'dshnD1K5Ouo' },
+      { urls: 'turn:152.136.125.55:3478?transport=tcp', username: 'dsh', credential: 'dshnD1K5Ouo' },
       // 以后加 TURN：{ urls: 'turn:turn.example.com:3478', username: 'u', credential: 'p' }
     ]
 
@@ -5581,6 +5601,19 @@ window.__ModuleLoader__.load({
       let room = null
       let timer = null
       let stopped = false
+      let winds = [0, 1, 2, 3]
+      let dealerSeat = 0
+      let deadlineIn = 0
+      let discuss = null
+      let phase = ''
+      let draft = null
+      let leaderLeft = 0
+      let finalLeft = 0
+      let speakSelfFirst = true
+      let speakReverse = false
+      let speakOpts = null
+      let lobbySig = ''
+      const WIND_NAMES = ['东', '南', '西', '北']
 
       const api2 = (m, path, b) =>
         api(auth.server, path, { method: m, token: auth.token, body: b })
@@ -5603,7 +5636,48 @@ window.__ModuleLoader__.load({
         return b
       }
 
+      /** 解散牌桌：房主专用，删完回大厅 */
+      const dissolveRoom = async () => {
+        if (!window.confirm('解散这张牌桌？里面的人会被请回大厅。')) return
+        try {
+          await api2('POST', '/api/mj/rooms/' + roomId + '/dismiss')
+          onToast('牌桌已解散')
+          state = null
+          room = null
+          roomId = ''
+          seat = -1
+          await renderLobby()
+        } catch (e) {
+          onToast('解散失败：' + friendly(e))
+        }
+      }
+
       /* ---------- 大厅 ---------- */
+/** 座位头像：真人用首字+色相，机器人 🤖，空位虚线 + */
+const seatAvatarEl = (s, size) => {
+  const sz = size || 26
+  const el = document.createElement('div')
+  if (s && s.bot) {
+    el.textContent = '🤖'
+    el.style.cssText =
+      'width:' + sz + 'px;height:' + sz + 'px;border-radius:50%;display:flex;align-items:center;justify-content:center;' +
+      'font-size:' + Math.round(sz * 0.5) + 'px;background:#ece4f6;box-shadow:0 0 0 2px #fff'
+  } else if (!s || s.empty || !s.id) {
+    el.textContent = '+'
+    el.style.cssText =
+      'width:' + sz + 'px;height:' + sz + 'px;border-radius:50%;display:flex;align-items:center;justify-content:center;' +
+      'font-size:' + Math.round(sz * 0.55) + 'px;color:#c9a8d8;background:#faf5ff;border:1.5px dashed #e3c8ef;box-sizing:border-box'
+  } else {
+    const hue = hueOf(s.id)
+    el.textContent = String(s.name || '?').slice(-1)
+    el.style.cssText =
+      'width:' + sz + 'px;height:' + sz + 'px;border-radius:50%;display:flex;align-items:center;justify-content:center;' +
+      'font-weight:700;font-size:' + Math.round(sz * 0.45) + 'px;color:#fff;background:hsl(' + hue + ' 55% 58%);box-shadow:0 0 0 2px #fff'
+    if (s.ready) el.style.boxShadow = '0 0 0 2px #fff, 0 0 0 4px #3ddc97'
+  }
+  return el
+}
+
       const renderLobby = async () => {
         bodyEl.textContent = ''
         roomEl.textContent = ''
@@ -5628,6 +5702,7 @@ window.__ModuleLoader__.load({
         try {
           const r = await api2('GET', '/api/mj/rooms')
           const rooms = (r.rooms || []).filter((x) => !x.ended)
+          lobbySig = JSON.stringify(rooms.map((x) => [x.id, x.humanCount, x.started, x.freeSeats]))
           if (!rooms.length) {
             const e = document.createElement('div')
             e.textContent = '还没有牌桌，点上面新建一个'
@@ -5639,12 +5714,17 @@ window.__ModuleLoader__.load({
             row.style.cssText =
               'display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:10px;background:#fff;border:1.5px solid #ffe3f0'
             const t = document.createElement('span')
-            t.textContent = '#' + rm.id + (rm.started ? ' · 进行中' : ' · 等人')
-            t.style.cssText = 'flex:1;font-size:12px'
+            t.textContent = '#' + rm.id
+            t.style.cssText = 'font-size:12px;font-weight:650;color:#5b3a63'
             row.appendChild(t)
-            row.appendChild(chip(rm.players.filter((p) => p.id).length + '/4'))
+            const seatsBox = document.createElement('div')
+            seatsBox.style.cssText = 'display:flex;gap:3px;flex:1;justify-content:center'
+            const rmSeats = rm.seats || []
+            for (let si = 0; si < 4; si++) seatsBox.appendChild(seatAvatarEl(rmSeats[si], 24))
+            row.appendChild(seatsBox)
+            row.appendChild(chip(rm.started ? (rm.ended ? '已结束' : '进行中') : '等人 ' + (rm.humanCount || 0) + '/4'))
             row.appendChild(
-              btn('加入', async () => {
+              btn(rm.started ? '接管' : '加入', async () => {
                 try {
                   const j = await api2('POST', '/api/mj/rooms/' + rm.id + '/join')
                   roomId = rm.id
@@ -5671,46 +5751,77 @@ window.__ModuleLoader__.load({
 
         const meInfo = room.players[seat] || { name: '我' }
 
-        // 对家
-        const top = document.createElement('div')
-        top.style.cssText = 'display:flex;align-items:center;gap:8px;justify-content:center;margin-bottom:8px'
-        const opp2 = room.players[2] || { name: '空位' }
-        top.appendChild(
-          chip(opp2.name + ' · ' + (opp2.score || 0) + '分 · ' + (s.seats[2].handCount || 0) + ' 张'),
-        )
-        if (s.turn === 2 && !s.ended) top.appendChild(chip('出牌中'))
-        bodyEl.appendChild(top)
-
-        // 左右 + 牌河
-        const mid = document.createElement('div')
-        mid.style.cssText = 'display:flex;gap:8px;align-items:flex-start'
-        const side = (i) => {
-          const box = document.createElement('div')
-          box.style.cssText = 'width:78px;flex:0 0 auto;display:flex;flex-direction:column;gap:4px'
+        // 座位信息（东南西北 + 庄）
+        const seatLabel = (i) => {
           const p = room.players[i] || { name: '空位' }
-          box.appendChild(chip(p.name))
-          box.appendChild(chip((p.score || 0) + ' 分'))
-          box.appendChild(chip((s.seats[i].handCount || 0) + ' 张'))
-          if (s.turn === i && !s.ended) box.appendChild(chip('出牌中'))
-          return box
+          const w = WIND_NAMES[(winds[i] || 0) % 4]
+          const zhuang = i === dealerSeat ? '庄' : ''
+          return w + zhuang + ' ' + p.name
         }
-        mid.appendChild(side(3))
-
-        const pool = document.createElement('div')
-        pool.style.cssText =
-          'flex:1;min-width:0;background:#024d3a;border-radius:12px;padding:6px;display:flex;flex-wrap:wrap;gap:2px;align-content:flex-start;min-height:96px'
-        s.discards.forEach((arr, i) => {
-          for (const t of arr) {
-            const tile = mjTileEl(tileBase, t, 20)
-            if (s.lastDiscard && s.lastDiscard.tile === t && i === s.lastDiscard.seat) {
+        const seatChip = (i, size) => {
+          const p = room.players[i] || { name: '空位' }
+          const hc = (s.seats[i] && s.seats[i].handCount) || 0
+          return chip(
+            seatLabel(i) + ' · ' + (p.score || 0) + '分 · ' + hc + '张' + (s.turn === i && !s.ended ? ' · 出牌中' : ''),
+          )
+        }
+        const discardZone = (i, size) => {
+          const z = document.createElement('div')
+          z.style.cssText =
+            'display:flex;flex-wrap:wrap;gap:2px;align-content:flex-start;padding:5px;border-radius:10px;' +
+            'background:rgba(2,77,58,.55);min-height:' + (size * 1.38 + 10) + 'px;' +
+            'max-width:' + (size * 1.38 * 4 + 18) + 'px;min-width:' + (size * 1.38 * 2 + 10) + 'px'
+          for (const t of s.discards[i] || []) {
+            const tile = mjTileEl(tileBase, t, size)
+            if (s.lastDiscard && s.lastDiscard.tile === t && s.lastDiscard.seat === i) {
               tile.style.outline = '2px solid #ffcf3d'
             }
-            pool.appendChild(tile)
+            z.appendChild(tile)
           }
-        })
+          return z
+        }
+
+        // 上（对家）
+        const topWrap = document.createElement('div')
+        topWrap.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:4px;margin-bottom:6px'
+        topWrap.appendChild(seatChip((seat + 2) % 4))
+        topWrap.appendChild(discardZone((seat + 2) % 4, 18))
+        bodyEl.appendChild(topWrap)
+
+        // 中：左 / 中 / 右
+        const mid = document.createElement('div')
+        mid.style.cssText = 'display:flex;gap:8px;align-items:flex-start;justify-content:center'
+        const sideCol = (i) => {
+          const col = document.createElement('div')
+          col.style.cssText = 'display:flex;flex-direction:column;gap:4px;align-items:center'
+          col.appendChild(seatChip(i))
+          col.appendChild(discardZone(i, 15))
+          return col
+        }
+        mid.appendChild(sideCol((seat + 3) % 4))
+        const pool = document.createElement('div')
+        pool.style.cssText =
+          'flex:0 1 auto;min-width:0;display:flex;flex-direction:column;align-items:center;gap:4px;padding:6px;' +
+          'background:#024d3a;border-radius:12px;min-height:96px;justify-content:center'
+        const wallChip = chip('牌墙 ' + s.wallCount)
+        pool.appendChild(wallChip)
+        if (!s.ended) {
+          const left = deadlineIn > 0 ? Math.ceil(deadlineIn / 1000) : 0
+          if (s.turn === seat) pool.appendChild(chip('轮到你 · 剩 ' + left + 's'))
+          else if (left) pool.appendChild(chip('剩余 ' + left + 's'))
+        }
         mid.appendChild(pool)
-        mid.appendChild(side(1))
+        mid.appendChild(sideCol((seat + 1) % 4))
         bodyEl.appendChild(mid)
+
+        // 下（我自己）
+        const meWrap = document.createElement('div')
+        meWrap.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:4px;margin-top:8px'
+        meWrap.appendChild(seatChip(seat))
+        const myDiscard = discardZone(seat, 18)
+        myDiscard.style.cssText = myDiscard.style.cssText.replace('rgba(2,77,58,.55)', 'rgba(2,77,58,.75)')
+        meWrap.appendChild(myDiscard)
+        bodyEl.appendChild(meWrap)
 
         // 我的副露
         const melds = document.createElement('div')
@@ -5726,9 +5837,8 @@ window.__ModuleLoader__.load({
 
         // 顶部状态
         const status = document.createElement('div')
-        status.style.cssText = 'display:flex;gap:6px;align-items:center;margin:2px 0 6px'
-        status.appendChild(chip('牌墙 ' + s.wallCount))
-        status.appendChild(chip(meInfo.name))
+        status.style.cssText = 'display:flex;gap:6px;align-items:center;margin:2px 0 6px;flex-wrap:wrap'
+        status.appendChild(chip('你是 ' + seatLabel(seat)))
         if (s.ended) {
           status.appendChild(
             chip(s.winner === null ? '流局' : (room.players[s.winner] || {}).name + ' 胡了'),
@@ -5779,6 +5889,21 @@ window.__ModuleLoader__.load({
         // 操作
         const acts = document.createElement('div')
         acts.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;align-items:center'
+        acts.appendChild(
+          btn('← 大厅', async () => {
+            if (room && room.owner === auth.id && !window.confirm('你是房主，离开会转让或解散这张牌桌，确定？')) return
+            try {
+              await api2('POST', '/api/mj/rooms/' + roomId + '/leave')
+            } catch (e) {
+              /* 忽略 */
+            }
+            state = null
+            room = null
+            roomId = ''
+            seat = -1
+            renderLobby()
+          }),
+        )
         if (!s.ended) {
           for (const op of s.options || []) {
             const label = op === 'hu' ? '胡' : op === 'gang' ? '杠' : '碰'
@@ -5797,6 +5922,7 @@ window.__ModuleLoader__.load({
             seat = -1
             renderLobby()
           }))
+          if (room && room.owner === auth.id) acts.appendChild(btn('解散牌桌', dissolveRoom))
         }
         bodyEl.appendChild(acts)
       }
@@ -5808,39 +5934,172 @@ window.__ModuleLoader__.load({
           room = r.room
           seat = r.seat
           state = r.state
+          winds = r.winds || [0, 1, 2, 3]
+          dealerSeat = r.dealerSeat || 0
+          deadlineIn = r.deadlineIn || 0
           if (room && seat >= 0 && room.players[seat]) {
             $('[data-score]').textContent = '积分 ' + (room.players[seat].score || 0)
           }
           if (!state) renderWaiting()
           else renderTable()
         } catch (e) {
-          hint.textContent = '状态读取失败'
+          const code = String((e && e.code) || '')
+          if (code === 'not-found' || /not-found|404/.test(String((e && e.message) || ''))) {
+            onToast('牌桌已解散')
+            state = null
+            room = null
+            roomId = ''
+            seat = -1
+            await renderLobby()
+            return
+          }
+          hint.textContent = '状态读取失败：' + friendly(e)
         }
       }
 
       const renderWaiting = () => {
         bodyEl.textContent = ''
         roomEl.textContent = '房间 ' + roomId
-        const t = document.createElement('div')
-        t.textContent = '等房主开局（房间号 ' + roomId + '，发给朋友就能进）'
-        t.style.cssText = 'font-size:12px;color:#a184b3;margin:6px 2px'
-        bodyEl.appendChild(t)
-        const who = document.createElement('div')
-        who.style.cssText = 'display:flex;flex-direction:column;gap:4px;margin:8px 0'
-        for (const p of room.players) who.appendChild(chip(p.seat + 1 + ' 号位 ' + p.name))
-        bodyEl.appendChild(who)
-        if (room.owner === auth.id) {
-          bodyEl.appendChild(
-            btn('开局', async () => {
+        const seats = room.seats || []
+        const meSeat = seats[seat] || null
+        const iAmOwner = room.owner === auth.id
+
+        const head = document.createElement('div')
+        head.style.cssText = 'display:flex;align-items:center;gap:8px;margin:2px 0 10px'
+        const code = document.createElement('span')
+        code.textContent = '牌桌 #' + roomId
+        code.style.cssText = 'font-size:13px;font-weight:700;color:#5b3a63'
+        head.appendChild(code)
+        head.appendChild(
+          btn('复制房间号', async () => {
+            try {
+              await navigator.clipboard.writeText(String(roomId))
+              onToast('房间号已复制，发给好友就能进')
+            } catch (e) {
+              onToast('复制失败，手动记一下：' + roomId)
+            }
+          }),
+        )
+        bodyEl.appendChild(head)
+
+        const grid = document.createElement('div')
+        grid.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px'
+        for (let i = 0; i < 4; i++) {
+          const st = seats[i] || { seat: i, empty: true }
+          const mine = i === seat
+          const card = document.createElement('div')
+          card.style.cssText =
+            'display:flex;align-items:center;gap:9px;padding:9px 10px;border-radius:14px;background:#fff;' +
+            'border:1.5px solid ' + (mine ? '#ff9ec4' : '#ffe3f0') + ';' +
+            (mine ? 'box-shadow:0 4px 12px rgba(255,120,180,.16);' : '')
+          card.appendChild(seatAvatarEl(st, 38))
+          const info = document.createElement('div')
+          info.style.cssText = 'min-width:0;flex:1'
+          const nm = document.createElement('div')
+          nm.textContent = st.empty ? '空位' : st.bot ? '机器人' : st.name || '座位 ' + (i + 1)
+          nm.style.cssText =
+            'font-size:12.5px;font-weight:650;color:#4a2b52;white-space:nowrap;overflow:hidden;text-overflow:ellipsis'
+          info.appendChild(nm)
+          const stt = document.createElement('div')
+          stt.textContent = st.empty
+            ? '等人进来'
+            : st.bot
+              ? '机器人补位'
+              : st.ready
+                ? mine
+                  ? '你已准备'
+                  : '已准备'
+                : mine
+                  ? '你还没准备'
+                  : '准备中…'
+          stt.style.cssText = 'font-size:11px;color:' + (st.ready || st.bot ? '#2f8f65' : '#a184b3')
+          info.appendChild(stt)
+          card.appendChild(info)
+          if (st.bot && iAmOwner) {
+            card.appendChild(
+              btn('移除', async () => {
+                try {
+                  await api2('POST', '/api/mj/rooms/' + roomId + '/removebot', { seat: i })
+                  await render()
+                } catch (e) {
+                  onToast('移除失败：' + friendly(e))
+                }
+              }),
+            )
+          }
+          grid.appendChild(card)
+        }
+        bodyEl.appendChild(grid)
+
+        const acts = document.createElement('div')
+        acts.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;align-items:center'
+        if (meSeat && meSeat.id) {
+          acts.appendChild(
+            btn(
+              meSeat.ready ? '取消准备' : '准备',
+              async () => {
+                try {
+                  await api2('POST', '/api/mj/rooms/' + roomId + '/ready', {})
+                  await render()
+                } catch (e) {
+                  onToast('操作失败：' + friendly(e))
+                }
+              },
+              !meSeat.ready,
+            ),
+          )
+        }
+        if (iAmOwner) {
+          if (room.freeSeats > 0) {
+            acts.appendChild(
+              btn('＋ 添加机器人', async () => {
+                try {
+                  await api2('POST', '/api/mj/rooms/' + roomId + '/bots', {})
+                  await render()
+                } catch (e) {
+                  onToast('加机器人失败：' + friendly(e))
+                }
+              }),
+            )
+          }
+          const startBtn = btn(
+            room.canStart ? '开局' : '等待准备…',
+            async () => {
               try {
                 await api2('POST', '/api/mj/rooms/' + roomId + '/start')
-                render()
+                await render()
               } catch (e) {
                 onToast('开局失败：' + friendly(e))
               }
-            }, true),
+            },
+            !!room.canStart,
           )
+          if (!room.canStart) startBtn.style.opacity = '.45'
+          acts.appendChild(startBtn)
         }
+        acts.appendChild(
+          btn('退出牌桌', async () => {
+            try {
+              await api2('POST', '/api/mj/rooms/' + roomId + '/leave')
+            } catch (e) {
+              /* 忽略 */
+            }
+            state = null
+            room = null
+            roomId = ''
+            seat = -1
+            renderLobby()
+          }),
+        )
+        if (iAmOwner) acts.appendChild(btn('解散牌桌', dissolveRoom))
+        bodyEl.appendChild(acts)
+
+        const tip = document.createElement('div')
+        tip.style.cssText = 'font-size:11.5px;color:#a184b3;margin-top:8px;line-height:1.6'
+        tip.textContent = room.canStart
+          ? '人齐了、都准备好了 —— 点「开局」开打'
+          : '空位可以等人进来，也可以由房主加机器人补上；满 4 人且所有真人准备后自动开局'
+        bodyEl.appendChild(tip)
       }
 
       const act = async (payload) => {
@@ -5858,7 +6117,19 @@ window.__ModuleLoader__.load({
 
       // 只轮询牌桌；大厅不刷，避免列表一直闪
       const tick = async () => {
-        if (stopped || !roomId) return
+        if (stopped) return
+        if (!roomId) {
+          // 在大厅：每 3 秒看看有没有新桌 / 有没有人进来
+          try {
+            const r = await api2('GET', '/api/mj/rooms')
+            const rooms = (r.rooms || []).filter((x) => !x.ended)
+            const sig = JSON.stringify(rooms.map((x) => [x.id, x.humanCount, x.started, x.freeSeats]))
+            if (sig !== lobbySig) renderLobby()
+          } catch (e) {
+            /* 忽略 */
+          }
+          return
+        }
         await render()
       }
 
@@ -5965,6 +6236,782 @@ window.__ModuleLoader__.load({
         document.addEventListener('mousemove', move)
         document.addEventListener('mouseup', up)
       })
+    }
+
+    /* ---------- 阿瓦隆 ---------- */
+    const AV_ROLES = {
+      merlin: '梅林', percival: '派西维尔', loyalServant: '忠臣', minion: '爪牙',
+      morgana: '莫甘娜', assassin: '刺客', oberon: '奥伯伦', mordred: '莫德雷德',
+      lancelotGood: '兰斯洛特(善)', lancelotEvil: '兰斯洛特(恶)',
+    }
+    const AV_STAGE = {
+      teamBuilding: '组队', teamVote: '投票', quest: '任务', excalibur: '圣剑', discussion: '发言', lead: '队长选车', final: '最终定车', vote: '投票',
+      ladyOfTheLake: '湖中仙女', assassination: '刺杀', ended: '结束',
+    }
+
+    function openAvalon(opts) {
+      const avSeatAvatar = (st, size) => {
+        const sz = size || 32
+        const el = document.createElement('div')
+        if (st && st.bot) {
+          el.textContent = '🤖'
+          el.style.cssText = 'width:' + sz + 'px;height:' + sz + 'px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:' + Math.round(sz * 0.5) + 'px;background:#ece4f6'
+        } else if (!st || !st.id) {
+          el.textContent = '+'
+          el.style.cssText = 'width:' + sz + 'px;height:' + sz + 'px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:' + Math.round(sz * 0.55) + 'px;color:#c9a8d8;background:#faf5ff;border:1.5px dashed #e3c8ef;box-sizing:border-box'
+        } else {
+          const hue = hueOf(st.id)
+          el.textContent = String(st.name || '?').slice(-1)
+          el.style.cssText = 'width:' + sz + 'px;height:' + sz + 'px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:' + Math.round(sz * 0.45) + 'px;color:#fff;background:hsl(' + hue + ' 55% 58%)'
+          if (st.ready) el.style.boxShadow = '0 0 0 2px #0f1b2e, 0 0 0 4px #3ddc97'
+        }
+        return el
+      }
+
+      const auth = opts.auth
+      const onToast = opts.onToast || (() => {})
+      const api3 = (m, path, b) => api(auth.server, path, { method: m, token: auth.token, body: b })
+
+      const wrap = document.createElement('div')
+      wrap.style.cssText = [
+        'position:fixed', 'right:18px', 'bottom:18px', 'width:520px', 'max-width:calc(100vw - 16px)',
+        'height:640px', 'max-height:calc(100vh - 24px)', 'z-index:2147483646', 'display:flex',
+        'flex-direction:column', 'border-radius:16px', 'overflow:hidden',
+        'background:linear-gradient(180deg,#0f1b2e,#0b1522)', 'color:#e8eefc',
+        'border:1px solid rgba(140,170,220,.28)', 'box-shadow:0 18px 50px rgba(0,0,0,.5),0 0 0 1px rgba(255,255,255,.04) inset',
+      ].join(';')
+
+      const head = document.createElement('div')
+      head.style.cssText = 'display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid rgba(140,170,220,.2)'
+      const title = document.createElement('div')
+      title.textContent = '🏰 阿瓦隆'
+      title.style.cssText = 'font-size:13px;font-weight:700'
+      head.appendChild(title)
+      const hint = document.createElement('div')
+      hint.style.cssText = 'font-size:11px;color:#8fa6c8;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'
+      head.appendChild(hint)
+      let micStream = null
+      let micOn = false
+      const voiceBtn = document.createElement('button')
+      voiceBtn.textContent = '🎤 语音'
+      voiceBtn.style.cssText = 'padding:4px 10px;border-radius:8px;border:1px solid rgba(140,170,220,.3);background:transparent;color:inherit;font:inherit;font-size:11.5px;cursor:pointer'
+      voiceBtn.addEventListener('click', async () => {
+        if (micOn) {
+          try { micStream.getTracks().forEach((t) => t.stop()) } catch (e) {}
+          micStream = null
+          micOn = false
+          voiceBtn.textContent = '🎤 语音'
+          onToast('已关闭麦克风')
+          return
+        }
+        try {
+          micStream = await navigator.mediaDevices.getUserMedia({ audio: true })
+          micOn = true
+          voiceBtn.textContent = '🎤 已开麦'
+          onToast('麦克风已开启')
+        } catch (e) {
+          onToast('打不开麦克风：' + ((e && e.message) || e))
+        }
+      })
+      head.appendChild(voiceBtn)
+      const closeBtn = document.createElement('button')
+      closeBtn.textContent = '关闭'
+      closeBtn.style.cssText = 'padding:4px 10px;border-radius:8px;border:1px solid rgba(140,170,220,.3);background:transparent;color:inherit;font:inherit;font-size:11.5px;cursor:pointer'
+      head.appendChild(closeBtn)
+      wrap.appendChild(head)
+
+      const body = document.createElement('div')
+      body.style.cssText = 'flex:1;min-height:0;overflow:auto;padding:12px'
+      wrap.appendChild(body)
+
+      const foot = document.createElement('div')
+      foot.style.cssText = 'padding:8px 12px;border-top:1px solid rgba(140,170,220,.2);display:flex;gap:6px;flex-wrap:wrap'
+      wrap.appendChild(foot)
+
+      const btn = (t, fn, primary) => {
+        const b = document.createElement('button')
+        b.textContent = t
+        b.style.cssText =
+          'padding:6px 12px;border-radius:9px;font:inherit;font-size:12px;cursor:pointer;' +
+          (primary
+            ? 'border:none;background:linear-gradient(135deg,#5b8cff,#7a5cff);color:#fff;font-weight:700;'
+            : 'border:1px solid rgba(140,170,220,.3);background:rgba(255,255,255,.04);color:inherit;')
+        b.addEventListener('click', fn)
+        return b
+      }
+      const chipEl = (t) => {
+        const c = document.createElement('span')
+        c.textContent = t
+        c.style.cssText = 'font-size:11px;padding:2px 8px;border-radius:99px;background:rgba(120,150,220,.16);border:1px solid rgba(140,170,220,.28);color:#cfe0ff'
+        return c
+      }
+
+      let roomId = ''
+      let room = null
+      let seat = -1
+      let view = null
+      let picking = []
+      let stopped = false
+      let timer = null
+
+      const reset = () => {
+        roomId = ''
+        room = null
+        seat = -1
+        view = null
+        picking = []
+      }
+
+      const renderLobby = async () => {
+        body.textContent = ''
+        foot.textContent = ''
+        hint.textContent = '选人数开房，或加入一张桌子'
+        const row = document.createElement('div')
+        row.style.cssText = 'display:flex;gap:6px;align-items:center;margin-bottom:10px'
+        const sel = document.createElement('select')
+        sel.style.cssText = 'padding:6px 8px;border-radius:9px;background:#122238;color:inherit;border:1px solid rgba(140,170,220,.3);font:inherit;font-size:12px'
+        for (let n = 5; n <= 10; n++) {
+          const o = document.createElement('option')
+          o.value = String(n)
+          o.textContent = n + ' 人'
+          if (n === 7) o.selected = true
+          sel.appendChild(o)
+        }
+        row.appendChild(sel)
+        const mk = (label) => {
+          const lab = document.createElement('label')
+          lab.style.cssText = 'display:flex;align-items:center;gap:4px;font-size:11.5px;color:#a9bede;cursor:pointer'
+          const cb = document.createElement('input')
+          cb.type = 'checkbox'
+          cb.style.accentColor = '#5b8cff'
+          lab.appendChild(cb)
+          lab.appendChild(document.createTextNode(label))
+          return { lab, cb }
+        }
+        const optLady = mk('湖中仙女')
+        const optEx = mk('圣剑')
+        row.appendChild(optLady.lab)
+        row.appendChild(optEx.lab)
+        row.appendChild(btn('＋ 新建房间', async () => {
+          try {
+            const r = await api3('POST', '/api/av/rooms', {
+              size: Number(sel.value),
+              options: { ladyOfTheLake: optLady.cb.checked, excalibur: optEx.cb.checked },
+            })
+            roomId = r.room.id
+            seat = 0
+            await render()
+          } catch (e) {
+            onToast('建房失败：' + friendly(e))
+          }
+        }, true))
+        body.appendChild(row)
+
+        try {
+          const r = await api3('GET', '/api/av/rooms')
+          const rooms = (r.rooms || []).filter((x) => !x.ended)
+          if (!rooms.length) {
+            const e = document.createElement('div')
+            e.textContent = '还没有房间，新建一个吧'
+            e.style.cssText = 'font-size:12px;color:#8fa6c8'
+            body.appendChild(e)
+          }
+          for (const rm of rooms) {
+            const line = document.createElement('div')
+            line.style.cssText = 'display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:10px;background:rgba(255,255,255,.04);border:1px solid rgba(140,170,220,.2);margin-bottom:6px'
+            const t = document.createElement('span')
+            t.textContent = '#' + rm.id + ' · ' + rm.seats.filter((x) => x.id).length + '/' + rm.size + (rm.started ? ' · 进行中' : '')
+            t.style.cssText = 'flex:1;font-size:12px'
+            line.appendChild(t)
+            line.appendChild(btn(rm.started ? '观战' : '加入', async () => {
+              try {
+                const j = await api3('POST', '/api/av/rooms/' + rm.id + '/join')
+                roomId = rm.id
+                seat = j.seat
+                await render()
+              } catch (e) {
+                onToast('加入失败：' + friendly(e))
+              }
+            }))
+            body.appendChild(line)
+          }
+        } catch (e) {
+          hint.textContent = '房间列表读取失败'
+        }
+      }
+
+      const renderWaiting = () => {
+        body.textContent = ''
+        foot.textContent = ''
+        hint.textContent = '房间 #' + roomId + ' · 准备中'
+        const isOwner = room.owner === auth.id
+        const pv = room.preview || {}
+        const chars = pv.characters || []
+        const quests = pv.quests || []
+        const cnt = {}
+        chars.forEach((k) => { cnt[k] = (cnt[k] || 0) + 1 })
+
+        // 座位（头像 + 准备状态）
+        const grid = document.createElement('div')
+        grid.style.cssText = 'display:grid;grid-template-columns:repeat(2,1fr);gap:6px;margin-bottom:10px'
+        room.seats.forEach((st, i) => {
+          const line = document.createElement('div')
+          line.style.cssText = 'display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:10px;background:rgba(255,255,255,.04);border:1px solid rgba(140,170,220,.2)'
+          line.appendChild(avSeatAvatar({ ...st, ready: !!((room.ready || [])[i] || st.bot) }, 32))
+          const info = document.createElement('div')
+          info.style.cssText = 'min-width:0;flex:1'
+          const nm = document.createElement('div')
+          nm.textContent = (i === 0 ? '👑 ' : '') + (st.empty ? '空位' : st.bot ? '机器人' : st.name)
+          nm.style.cssText = 'font-size:12px;color:' + (i === seat ? '#9fc0ff' : '#e8eefc')
+          info.appendChild(nm)
+          const sd = document.createElement('div')
+          sd.textContent = st.empty ? '等人' : st.bot ? '机器人补位' : ((room.ready || [])[i] ? '已准备' : '未准备')
+          sd.style.cssText = 'font-size:10.5px;color:' + ((room.ready || [])[i] || st.bot ? '#7ef0b0' : '#8fa6c8')
+          info.appendChild(sd)
+          line.appendChild(info)
+          grid.appendChild(line)
+        })
+        body.appendChild(grid)
+
+        // 角色配置
+        const roleBox = document.createElement('div')
+        roleBox.style.cssText = 'padding:8px 10px;border-radius:10px;background:rgba(90,130,220,.12);border:1px solid rgba(140,170,220,.28);margin-bottom:8px'
+        roleBox.innerHTML =
+          '<div style="font-size:12px;font-weight:700;margin-bottom:4px">角色配置（' + room.size + ' 人）</div>' +
+          '<div style="font-size:11.5px;color:#a9bede">' + Object.keys(cnt).map((k) => (AV_ROLES[k] || k) + (cnt[k] > 1 ? '×' + cnt[k] : '')).join('、') + '</div>'
+        body.appendChild(roleBox)
+
+        // 规则：5 轮
+        const ruleBox = document.createElement('div')
+        ruleBox.style.cssText = 'padding:8px 10px;border-radius:10px;background:rgba(255,255,255,.04);border:1px solid rgba(140,170,220,.22);margin-bottom:8px'
+        let html = '<div style="font-size:12px;font-weight:700;margin-bottom:4px">规则</div>'
+        html += '<div style="font-size:11px;color:#a9bede;line-height:1.7">5 轮任务 · 3 轮成功正义胜（再刺杀梅林）· 3 轮失败邪恶胜<br>每轮否决额度 ' + (pv.teamProposalLimit || room.size + 1) + ' 次，用尽则本轮任务判失败</div>'
+        html += '<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:4px;margin-top:6px">'
+        quests.forEach((q, i) => {
+          html += '<div style="padding:4px;border-radius:7px;background:rgba(120,150,220,.14);text-align:center;font-size:10px;line-height:1.5">第' + (i + 1) + '轮<br>' + q.teamSize + '人上车<br>需' + q.failsRequired + '败</div>'
+        })
+        html += '</div>'
+        ruleBox.innerHTML = html
+        body.appendChild(ruleBox)
+
+        // 房主选项
+        if (isOwner) {
+          const opt = document.createElement('div')
+          opt.style.cssText = 'display:flex;gap:8px;margin-bottom:8px;font-size:11.5px'
+          const mk = (label, checked, onChange) => {
+            const lab = document.createElement('label')
+            lab.style.cssText = 'display:flex;align-items:center;gap:4px;cursor:pointer'
+            const cb = document.createElement('input')
+            cb.type = 'checkbox'
+            cb.checked = !!checked
+            cb.style.accentColor = '#5b8cff'
+            cb.addEventListener('change', onChange)
+            lab.appendChild(cb)
+            lab.appendChild(document.createTextNode(label))
+            return lab
+          }
+          opt.appendChild(mk('湖中仙女', room.options && room.options.ladyOfTheLake, async (e) => {
+            try { await api3('POST', '/api/av/rooms/' + roomId + '/options', { ladyOfTheLake: e.target.checked, excalibur: !!(room.options && room.options.excalibur) }); await render() } catch (err) { onToast('设置失败：' + friendly(err)) }
+          }))
+          opt.appendChild(mk('圣剑', room.options && room.options.excalibur, async (e) => {
+            try { await api3('POST', '/api/av/rooms/' + roomId + '/options', { ladyOfTheLake: !!(room.options && room.options.ladyOfTheLake), excalibur: e.target.checked }); await render() } catch (err) { onToast('设置失败：' + friendly(err)) }
+          }))
+          body.appendChild(opt)
+        }
+
+        // 底部操作
+        if (seat >= 0) {
+          const rd = (room.ready || [])[seat]
+          foot.appendChild(btn(rd ? '取消准备' : '准备', async () => {
+            try { await api3('POST', '/api/av/rooms/' + roomId + '/ready'); await render() } catch (e) { onToast('操作失败：' + friendly(e)) }
+          }, !rd))
+        }
+        if (isOwner) {
+          if (room.seats.some((x) => x.empty)) {
+            foot.appendChild(btn('＋ 机器人', async () => {
+              try { await api3('POST', '/api/av/rooms/' + roomId + '/bots'); await render() } catch (e) { onToast('加机器人失败：' + friendly(e)) }
+            }))
+          }
+          const humans = room.seats.map((x, i) => (x.id ? i : -1)).filter((i) => i >= 0)
+          const allReady = humans.every((i) => (room.ready || [])[i])
+          const sb = btn(allReady ? '开始游戏' : '等待准备…', async () => {
+            try { await api3('POST', '/api/av/rooms/' + roomId + '/start'); await render() } catch (e) { onToast('开局失败：' + friendly(e)) }
+          }, allReady)
+          if (!allReady) sb.style.opacity = '.5'
+          foot.appendChild(sb)
+        }
+        foot.appendChild(btn('复制房间号', async () => {
+          try { await navigator.clipboard.writeText(String(roomId)); onToast('已复制') } catch (e) { onToast('房间号：' + roomId) }
+        }))
+        foot.appendChild(btn('退出', async () => {
+          try { await api3('POST', '/api/av/rooms/' + roomId + '/leave') } catch (e) {}
+          reset()
+          await renderLobby()
+        }))
+        if (isOwner) {
+          foot.appendChild(btn('解散房间', async () => {
+            if (!window.confirm('解散房间？')) return
+            try { await api3('POST', '/api/av/rooms/' + roomId + '/leave') } catch (e) {}
+            reset()
+            await renderLobby()
+          }))
+        }
+      }
+
+      const renderGame = () => {
+        body.textContent = ''
+        foot.textContent = ''
+        const v = view
+        const quests = v.quests || []
+        const activeIdx = quests.findIndex((q) => q.status === 'active')
+        const doneOf = (q) => q && (q.status === 'succeeded' || q.status === 'failed' || q.status === 'resolved')
+        const roundNo = (activeIdx >= 0 ? activeIdx : quests.filter(doneOf).length) + 1
+        const active = quests[activeIdx] || null
+        const proposals = active ? active.teams.length : 0
+        const maxProposals = (v.rule && v.rule.teamProposalLimit && v.rule.teamProposalLimit.max) || 5
+        const quota = room.size + 1 // 允许否决「人数」次，第「人数+1」次判本轮失败
+        const left = Math.max(0, quota - proposals)
+        const voteSeat = active && active.teams.length ? active.teams[active.teams.length - 1] : null
+        const votedCount = voteSeat ? voteSeat.voted.filter(Boolean).length : 0
+
+        hint.textContent = '第 ' + roundNo + '/5 轮 · ' + (AV_STAGE[phase] || AV_STAGE[v.stage] || v.stage)
+
+        // 进度条：轮次 + 组队次数
+        const strip = document.createElement('div')
+        strip.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px'
+        strip.appendChild(chipEl('第 ' + roundNo + ' / 5 轮'))
+        strip.appendChild(chipEl('第 ' + (proposals + (active && active.teams.length && (v.stage === 'teamVote' || v.stage === 'quest') ? 0 : 1)) + ' 次组队'))
+        strip.appendChild(chipEl('本轮否决 ' + proposals + '/' + quota + ' 次'))
+        if (phase === 'lead') strip.appendChild(chipEl('队长选车 ' + Math.ceil(leaderLeft / 1000) + 's'))
+        if (phase === 'final') strip.appendChild(chipEl('最终定车 ' + Math.ceil(finalLeft / 1000) + 's'))
+        if (voteSeat && v.stage === 'teamVote') strip.appendChild(chipEl('已投票 ' + votedCount + '/' + room.size))
+        body.appendChild(strip)
+
+        if (left === 1) {
+          const warn = document.createElement('div')
+          warn.textContent = '⚠️ 再否决一次，本轮任务直接判失败，进入下一轮'
+          warn.style.cssText = 'font-size:11.5px;color:#ffcf3d;margin:-4px 0 8px'
+          body.appendChild(warn)
+        }
+
+        // 5 轮任务标记
+        const track = document.createElement('div')
+        track.style.cssText = 'display:grid;grid-template-columns:repeat(5,1fr);gap:5px;margin-bottom:10px'
+        quests.forEach((q, i) => {
+          const box = document.createElement('div')
+          const done = doneOf(q)
+          const ok = done && (q.status === 'succeeded' || (q.result && q.result.success))
+          box.style.cssText =
+            'padding:6px 4px;border-radius:9px;text-align:center;font-size:10.5px;line-height:1.5;' +
+            'border:1px solid ' + (i === activeIdx ? 'rgba(120,170,255,.7)' : 'rgba(140,170,220,.22)') + ';' +
+            'background:' + (done ? (ok ? 'rgba(60,200,140,.18)' : 'rgba(255,95,162,.16)') : i === activeIdx ? 'rgba(90,130,220,.18)' : 'rgba(255,255,255,.03)')
+          box.textContent = '第' + (i + 1) + '轮\n' + q.teamSize + '人/需' + q.failsRequired + '败\n' + (done ? (ok ? '✅ 成功' : '❌ 失败') : i === activeIdx ? '▶ 进行中' : '· 未开始')
+          box.style.whiteSpace = 'pre-line'
+          track.appendChild(box)
+        })
+        body.appendChild(track)
+
+        // 发言阶段
+        if (discuss) {
+          const box = document.createElement('div')
+          box.style.cssText = 'padding:10px;border-radius:12px;background:rgba(255,207,61,.12);border:1px solid rgba(255,207,61,.4);margin-bottom:9px'
+          const left = Math.max(0, Math.ceil((discuss.deadlineIn || 0) / 1000))
+          const sp = discuss.spoke || []
+          const t1 = document.createElement('div')
+          t1.textContent = '💬 发言阶段：' + discuss.speaking + ' 号发言中 · 剩 ' + Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0')
+          t1.style.cssText = 'font-size:12.5px;font-weight:700;color:#ffe9a8'
+          box.appendChild(t1)
+          const t2 = document.createElement('div')
+          const ord = document.createElement('div')
+          ord.textContent = '顺序：' + (speakOpts && speakOpts.selfFirst === false ? '队长最后' : '队长先') + ' · ' + (speakOpts && speakOpts.reverse ? '倒序' : '正序')
+          ord.style.cssText = 'font-size:11px;color:#d8c79a;margin-top:3px'
+          box.appendChild(ord)
+          t2.textContent = '已发言：' + sp.map((x, i) => (x ? i + '号' : '')).filter(Boolean).join('、') + '（全员发完自动进入投票）'
+          t2.style.cssText = 'font-size:11px;color:#d8c79a;margin-top:4px'
+          box.appendChild(t2)
+          if (discuss.speaking === seat) {
+            box.appendChild(
+              btn('我说完了', () => sendAction({ type: 'finishSpeak' }), true),
+            )
+          }
+          body.appendChild(box)
+        }
+
+        // 角色配置（公开信息）
+        const comp = document.createElement('div')
+        const cnt = {}
+        ;((v.rule && v.rule.characters) || []).forEach((k) => { cnt[k] = (cnt[k] || 0) + 1 })
+        comp.textContent = '本局角色：' + Object.keys(cnt).map((k) => (AV_ROLES[k] || k) + (cnt[k] > 1 ? '×' + cnt[k] : '')).join('、')
+        comp.style.cssText = 'font-size:11px;color:#9fb6d8;margin-bottom:6px'
+        body.appendChild(comp)
+
+        // 我的身份
+        const card = document.createElement('div')
+        card.style.cssText = 'padding:9px 11px;border-radius:12px;background:rgba(90,130,220,.14);border:1px solid rgba(140,170,220,.3);margin-bottom:9px'
+        const rc = document.createElement('div')
+        rc.textContent = '你是 ' + (AV_ROLES[v.character] || v.character || '观战') + '（' + (v.alignment === 'evil' ? '邪恶' : '正义') + '）'
+        rc.style.cssText = 'font-size:13px;font-weight:700'
+        card.appendChild(rc)
+        if (v.knownPlayers && v.knownPlayers.length) {
+          const kp = document.createElement('div')
+          kp.textContent = '你看到：' + v.knownPlayers.map((k) => k.seat + '号' + (k.character ? '(' + (AV_ROLES[k.character] || k.character) + ')' : '')).join('、')
+          kp.style.cssText = 'font-size:11.5px;color:#a9bede;margin-top:3px'
+          card.appendChild(kp)
+        }
+        body.appendChild(card)
+
+        // 初版车型（尚未提交引擎）
+        if (draft && draft.length) {
+          const dEl = document.createElement('div')
+          dEl.textContent = '📝 初版车型（队长 ' + v.leader + ' 号）：' + draft.map((m) => m + '号').join('、') + (phase === 'final' ? ' · 待最终确认' : '')
+          dEl.style.cssText = 'font-size:11.5px;color:#ffe9a8;background:rgba(255,207,61,.1);border:1px solid rgba(255,207,61,.3);border-radius:9px;padding:6px 9px;margin-bottom:8px'
+          body.appendChild(dEl)
+        }
+
+        // 当前车队
+        if (voteSeat) {
+          const team = document.createElement('div')
+          team.style.cssText = 'padding:8px 10px;border-radius:10px;background:rgba(255,255,255,.05);border:1px solid rgba(140,170,220,.25);margin-bottom:8px'
+          team.textContent = '本轮车队（' + (voteSeat.leader) + '号 队长）：' + voteSeat.members.map((m) => m + '号').join('、')
+          team.style.cssText += ';font-size:12px'
+          if (v.stage === 'teamVote') team.textContent += ' · 投票中 ' + votedCount + '/' + room.size
+          body.appendChild(team)
+        }
+
+        // 玩家
+        const players = document.createElement('div')
+        players.style.cssText = 'display:grid;grid-template-columns:repeat(2,1fr);gap:6px;margin-bottom:8px'
+        for (let i = 0; i < room.size; i++) {
+          const st = room.seats[i]
+          const line = document.createElement('div')
+          line.style.cssText = 'display:flex;align-items:center;gap:6px;padding:6px 8px;border-radius:9px;background:rgba(255,255,255,.04);border:1px solid rgba(140,170,220,.18)'
+          const nm = document.createElement('span')
+          nm.textContent = (i === v.leader ? '👑 ' : '') + i + '号 ' + (st.bot ? '机器人' : st.name || '')
+          nm.style.cssText = 'flex:1;font-size:11.5px'
+          line.appendChild(nm)
+          if (voteSeat && voteSeat.members.includes(i)) line.appendChild(chipEl(voteSeat.voted[i] ? '已投' : '在队'))
+          players.appendChild(line)
+        }
+        body.appendChild(players)
+
+        const acts = document.createElement('div')
+        acts.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap'
+        body.appendChild(acts)
+        const pend = (v.pendingActions || [])
+        const mine = pend.filter((p) => (p.players || []).includes(seat))
+
+        const picker = (prefill, submitLabel, submitFn) => {
+          const need = (active && active.teamSize) || 2
+          const grid = document.createElement('div')
+          grid.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;width:100%'
+          if (prefill && prefill.length && picking.length === 0) picking = prefill.slice()
+          for (let i = 0; i < room.size; i++) {
+            const on = picking.includes(i)
+            const b = btn(i + '号' + (on ? ' ✓' : ''), () => {
+              picking = on ? picking.filter((x) => x !== i) : picking.concat([i])
+              renderGame()
+            })
+            if (on) b.style.background = 'rgba(90,140,255,.35)'
+            grid.appendChild(b)
+          }
+          acts.appendChild(grid)
+          const sub = btn(submitLabel + '（' + picking.length + '/' + need + '）', submitFn, true)
+          if (picking.length !== need) sub.disabled = true
+          acts.appendChild(sub)
+        }
+
+        if (phase === 'lead' && v.leader === seat) {
+          const optsBox = document.createElement('div')
+          optsBox.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;width:100%;margin-bottom:6px'
+          const mk = (label, on, fn) => {
+            const b = btn(label, fn)
+            b.style.fontSize = '11.5px'
+            if (on) b.style.background = 'rgba(90,140,255,.35)'
+            return b
+          }
+          optsBox.appendChild(mk(speakSelfFirst ? '我先发言' : '我最后发言', true, () => {
+            speakSelfFirst = !speakSelfFirst
+            renderGame()
+          }))
+          optsBox.appendChild(mk(speakReverse ? '倒序发言 ←' : '正序发言 →', true, () => {
+            speakReverse = !speakReverse
+            renderGame()
+          }))
+          acts.appendChild(optsBox)
+          picker([], '给出初版车型', async () => {
+            try { await sendAction({ type: 'leadDraft', members: picking.slice(), selfFirst: speakSelfFirst, reverse: speakReverse }); picking = [] } catch (e) { onToast('提交失败：' + friendly(e)) }
+          })
+          acts.appendChild(btn('不给车型，直接开始发言', async () => {
+            try { await sendAction({ type: 'leadSkip', selfFirst: speakSelfFirst, reverse: speakReverse }) } catch (e) { onToast('操作失败：' + friendly(e)) }
+          }))
+        } else if (phase === 'lead') {
+          const w = document.createElement('div')
+          w.textContent = '队长 ' + v.leader + ' 号在选车…（' + Math.ceil(leaderLeft / 1000) + 's）'
+          w.style.cssText = 'font-size:12px;color:#8fa6c8'
+          acts.appendChild(w)
+        } else if (phase === 'final' && v.leader === seat) {
+          picker(draft || [], '提交最终车型', async () => {
+            try { await sendAction({ type: 'leadFinal', members: picking.slice() }); picking = [] } catch (e) { onToast('提交失败：' + friendly(e)) }
+          })
+        } else if (phase === 'final') {
+          const w = document.createElement('div')
+          w.textContent = '队长 ' + v.leader + ' 号最终定车中…（' + Math.ceil(finalLeft / 1000) + 's）'
+          w.style.cssText = 'font-size:12px;color:#8fa6c8'
+          acts.appendChild(w)
+        } else if (v.stage === 'teamBuilding' && v.leader === seat) {
+          const need = (active && active.teamSize) || 2
+          const grid = document.createElement('div')
+          grid.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;width:100%'
+          for (let i = 0; i < room.size; i++) {
+            const on = picking.includes(i)
+            const b = btn(i + '号' + (on ? ' ✓' : ''), () => {
+              picking = on ? picking.filter((x) => x !== i) : picking.concat([i])
+              renderGame()
+            })
+            if (on) b.style.background = 'rgba(90,140,255,.35)'
+            grid.appendChild(b)
+          }
+          acts.appendChild(grid)
+          const sub = btn('提交车队（' + picking.length + '/' + need + '）', async () => {
+            try {
+              await sendAction({ type: 'proposeTeam', members: picking.slice() })
+              picking = []
+            } catch (e) {
+              onToast('提交失败：' + friendly(e))
+            }
+          }, true)
+          if (picking.length !== need) sub.disabled = true
+          acts.appendChild(sub)
+        } else if (v.stage === 'teamVote' && mine.some((p) => p.type === 'voteTeam')) {
+          acts.appendChild(btn('同意', () => sendAction({ type: 'voteTeam', approve: true }), true))
+          acts.appendChild(btn('反对（只换队长，不算任务失败）', () => sendAction({ type: 'voteTeam', approve: false })))
+        } else if (v.stage === 'quest' && mine.some((p) => p.type === 'playQuestCard')) {
+          acts.appendChild(btn('任务成功', () => sendAction({ type: 'playQuestCard', success: true }), true))
+          if (v.alignment === 'evil') acts.appendChild(btn('破坏任务', () => sendAction({ type: 'playQuestCard', success: false })))
+        } else if (v.stage === 'assassination' && mine.some((p) => p.type === 'assassinate')) {
+          for (let i = 0; i < room.size; i++) {
+            if (i === seat) continue
+            acts.appendChild(btn('刺杀 ' + i + '号', () => sendAction({ type: 'assassinate', target: i })))
+          }
+        } else {
+          const w = document.createElement('div')
+          if (v.result) {
+            const reasons = {
+              threeQuestsSucceeded: '三轮任务成功',
+              threeQuestsFailed: '三轮任务失败',
+              teamProposalLimitReached: '否决额度用尽',
+              assassinationHit: '刺客刺杀梅林成功',
+              assassinationMissed: '刺客没刺中梅林',
+              merlinAssassinated: '梅林被刺杀',
+            }
+            w.textContent = (v.result.winner === 'good' ? '✅ 正义方胜利' : '❌ 邪恶方胜利') + ' · ' + (reasons[v.result.reason] || v.result.reason || '')
+            w.style.color = v.result.winner === 'good' ? '#7ef0b0' : '#ff9aa8'
+          } else {
+            w.textContent = v.stage === 'teamBuilding' ? '等队长（' + v.leader + '号）组队…' : '等待其他人行动…（机器人会自动推进）'
+          }
+          w.style.cssText = 'font-size:12px;color:#8fa6c8'
+          acts.appendChild(w)
+        }
+
+        // 房间操作
+        foot.textContent = ''
+        foot.appendChild(btn('← 大厅', async () => {
+          reset()
+          await renderLobby()
+        }))
+        foot.appendChild(btn('复制房间号', async () => {
+          try { await navigator.clipboard.writeText(String(roomId)); onToast('房间号已复制') } catch (e) { onToast('复制失败：' + roomId) }
+        }))
+        foot.appendChild(btn('退出房间', async () => {
+          try { await api3('POST', '/api/av/rooms/' + roomId + '/leave') } catch (e) {}
+          reset()
+          await renderLobby()
+        }))
+        if (room && room.owner === auth.id) {
+          foot.appendChild(btn('解散房间', async () => {
+            if (!window.confirm('解散这个房间？')) return
+            try { await api3('POST', '/api/av/rooms/' + roomId + '/leave') } catch (e) {}
+            reset()
+            await renderLobby()
+          }))
+        }
+
+        if (v.result && v.players) {
+          const reveal = document.createElement('div')
+          reveal.style.cssText = 'margin-top:9px;font-size:11.5px;color:#a9bede;line-height:1.7'
+          reveal.textContent = v.players.map((p, i) => i + '号 ' + (AV_ROLES[p.character] || p.character) + '(' + (p.alignment === 'evil' ? '恶' : '善') + ')').join(' · ')
+          body.appendChild(reveal)
+        }
+      }
+
+      const sendAction = async (action) => {
+        try {
+          const r = await api3('POST', '/api/av/rooms/' + roomId + '/act', { action })
+          if (r && r.view) view = r.view
+          if (r && r.room) room = r.room
+          renderGame()
+        } catch (e) {
+          onToast('操作失败：' + friendly(e))
+        }
+      }
+
+      const render = async () => {
+        if (stopped || !roomId) return
+        try {
+          const r = await api3('GET', '/api/av/rooms/' + roomId + '/view')
+          room = r.room
+          seat = r.seat
+          view = r.view
+          discuss = r.discuss || null
+          phase = r.phase || ''
+          speakOpts = r.speakOpts || null
+          if (speakOpts && (phase === 'lead' || phase === 'discuss')) {
+            speakSelfFirst = speakOpts.selfFirst !== false
+            speakReverse = !!speakOpts.reverse
+          }
+          draft = r.draft || null
+          leaderLeft = r.leaderDeadlineIn || 0
+          finalLeft = r.finalDeadlineIn || 0
+          if (!view) renderWaiting()
+          else renderGame()
+        } catch (e) {
+          if (String((e && e.code) || '') === 'not-found') {
+            onToast('房间已解散')
+            reset()
+            await renderLobby()
+            return
+          }
+          hint.textContent = '状态读取失败'
+        }
+      }
+
+      closeBtn.addEventListener('click', () => {
+        stopped = true
+        window.clearInterval(timer)
+        if (micStream) { try { micStream.getTracks().forEach((t) => t.stop()) } catch (e) {} }
+        wrap.remove()
+      })
+
+      document.body.appendChild(wrap)
+      attachDragger(wrap, 'avalon')
+      attachScaler(wrap, 'avalon')
+      renderLobby()
+      timer = window.setInterval(async () => {
+        if (!roomId) return
+        await render()
+      }, 1200)
+      return { close: () => wrap.remove() }
+    }
+
+    /* ---------- 手机预览（开发工具） ---------- */
+    function openMobilePreview(opts) {
+      const auth = opts && opts.auth
+      const onToast = (opts && opts.onToast) || (() => {})
+      const DEVICES = [
+        { name: 'iPhone 15 (393×852)', w: 393, h: 852 },
+        { name: 'iPhone SE (375×667)', w: 375, h: 667 },
+        { name: 'iPhone 14 Pro Max (430×932)', w: 430, h: 932 },
+        { name: 'Pixel 8 (412×915)', w: 412, h: 915 },
+        { name: '安卓小屏 (360×780)', w: 360, h: 780 },
+        { name: 'iPad mini (768×1024)', w: 768, h: 1024 },
+      ]
+      let idx = 0
+      let rotate = false
+      let scale = 1
+
+      const wrap = document.createElement('div')
+      wrap.style.cssText = [
+        'position:fixed', 'right:16px', 'bottom:16px', 'width:520px', 'max-width:calc(100vw - 12px)',
+        'height:760px', 'max-height:calc(100vh - 24px)', 'z-index:2147483646', 'display:flex',
+        'flex-direction:column', 'border-radius:16px', 'overflow:hidden',
+        'background:linear-gradient(180deg,#0f1b2e,#0b1522)', 'color:#e8eefc',
+        'border:1px solid rgba(140,170,220,.28)', 'box-shadow:0 18px 50px rgba(0,0,0,.5)',
+      ].join(';')
+
+      const head = document.createElement('div')
+      head.style.cssText = 'display:flex;align-items:center;gap:6px;padding:9px 12px;border-bottom:1px solid rgba(140,170,220,.2);flex-wrap:wrap'
+      const title = document.createElement('div')
+      title.textContent = '📱 手机预览'
+      title.style.cssText = 'font-size:13px;font-weight:700'
+      head.appendChild(title)
+
+      const sel = document.createElement('select')
+      sel.style.cssText = 'font:inherit;font-size:11.5px;padding:3px 6px;border-radius:8px;background:#122238;color:inherit;border:1px solid rgba(140,170,220,.3)'
+      DEVICES.forEach((d, i) => {
+        const o = document.createElement('option')
+        o.value = String(i)
+        o.textContent = d.name
+        sel.appendChild(o)
+      })
+      head.appendChild(sel)
+
+      const btn = (t, fn) => {
+        const b = document.createElement('button')
+        b.textContent = t
+        b.style.cssText = 'padding:3px 9px;border-radius:8px;border:1px solid rgba(140,170,220,.3);background:transparent;color:inherit;font:inherit;font-size:11.5px;cursor:pointer'
+        b.addEventListener('click', fn)
+        return b
+      }
+      head.appendChild(btn('旋转', () => { rotate = !rotate; layout() }))
+      head.appendChild(btn('刷新', () => { const u = iframe.src; iframe.src = 'about:blank'; setTimeout(() => { iframe.src = u }, 60) }))
+      head.appendChild(btn('新窗口', () => window.open(iframe.src, '_blank')))
+      head.appendChild(btn('关闭', () => wrap.remove()))
+      wrap.appendChild(head)
+
+      const urlBar = document.createElement('div')
+      urlBar.style.cssText = 'display:flex;gap:6px;padding:7px 10px;border-bottom:1px solid rgba(140,170,220,.15)'
+      const url = document.createElement('input')
+      url.value = (auth && auth.mobileUrl) || 'https://xdxy-pet.com/dl/m/'
+      url.style.cssText = 'flex:1;min-width:0;padding:6px 9px;border-radius:8px;border:1px solid rgba(140,170,220,.3);background:rgba(255,255,255,.05);color:inherit;font:inherit;font-size:12px'
+      urlBar.appendChild(url)
+      urlBar.appendChild(btn('打开', () => { iframe.src = url.value.trim() }))
+      wrap.appendChild(urlBar)
+
+      const stage = document.createElement('div')
+      stage.style.cssText = 'flex:1;min-height:0;overflow:auto;display:flex;align-items:flex-start;justify-content:center;padding:12px;background:rgba(0,0,0,.25)'
+      const frame = document.createElement('div')
+      frame.style.cssText = 'border-radius:22px;overflow:hidden;background:#000;box-shadow:0 12px 40px rgba(0,0,0,.5);border:8px solid #1b2331;flex:0 0 auto'
+      const iframe = document.createElement('iframe')
+      iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-popups allow-modals')
+      iframe.style.cssText = 'display:block;border:0;background:#0b1522'
+      frame.appendChild(iframe)
+      stage.appendChild(frame)
+      wrap.appendChild(stage)
+
+      const foot = document.createElement('div')
+      foot.style.cssText = 'display:flex;align-items:center;gap:8px;padding:7px 12px;border-top:1px solid rgba(140,170,220,.2);font-size:11.5px;color:#8fa6c8'
+      const sizeLabel = document.createElement('span')
+      foot.appendChild(sizeLabel)
+      const slider = document.createElement('input')
+      slider.type = 'range'
+      slider.min = '0.4'
+      slider.max = '1'
+      slider.step = '0.05'
+      slider.value = '0.8'
+      slider.style.cssText = 'flex:1;accent-color:#5b8cff'
+      slider.addEventListener('input', () => { scale = Number(slider.value); layout() })
+      foot.appendChild(slider)
+      wrap.appendChild(foot)
+
+      function layout() {
+        const d = DEVICES[idx]
+        const w = rotate ? d.h : d.w
+        const h = rotate ? d.w : d.h
+        iframe.style.width = w + 'px'
+        iframe.style.height = h + 'px'
+        frame.style.transform = 'scale(' + scale + ')'
+        frame.style.transformOrigin = 'top center'
+        frame.style.marginBottom = (-(h * (1 - scale)) + 20) + 'px'
+        sizeLabel.textContent = w + '×' + h + ' · ' + Math.round(scale * 100) + '%'
+      }
+      sel.addEventListener('change', () => { idx = Number(sel.value); layout() })
+      layout()
+      iframe.src = url.value.trim()
+
+      document.body.appendChild(wrap)
+      attachDragger(wrap, 'mobile-preview')
+      attachScaler(wrap, 'mobile-preview')
+      return { close: () => wrap.remove() }
     }
 
     /* ---------- 每日杀手数独 ---------- */
@@ -7692,31 +8739,62 @@ window.__ModuleLoader__.load({
     const PANEL_ID = 'dsh-share-chat'
 
     /** 左侧栏图标：用 currentColor，跟着主题走 */
-    function SocialIcon() {
-      return h(
-        'svg',
-        {
-          viewBox: '0 0 24 24',
-          width: 18,
-          height: 18,
-          'aria-hidden': true,
-          style: { display: 'block' },
-        },
-        h('path', {
-          d: 'M4.2 5h15.6A1.7 1.7 0 0 1 21.5 6.7v9.1a1.7 1.7 0 0 1-1.7 1.7h-8.1l-3.9 3v-3H4.2a1.7 1.7 0 0 1-1.7-1.7V6.7A1.7 1.7 0 0 1 4.2 5Z',
-          fill: 'none',
-          stroke: 'currentColor',
-          strokeWidth: 1.6,
-          strokeLinejoin: 'round',
-        }),
-        h('circle', { cx: 8.6, cy: 11.2, r: 1.15, fill: 'currentColor' }),
-        h('circle', { cx: 12, cy: 11.2, r: 1.15, fill: 'currentColor' }),
-        h('circle', { cx: 15.4, cy: 11.2, r: 1.15, fill: 'currentColor' }),
-      )
+    const UNREAD = { n: 0, subs: new Set() }
+function setUnread(n) {
+  UNREAD.n = Math.max(0, n | 0)
+  UNREAD.subs.forEach((fn) => { try { fn() } catch { /* ignore */ } })
+}
+function useUnread() {
+  const [n, setN] = React.useState(UNREAD.n)
+  React.useEffect(() => {
+    const fn = () => setN(UNREAD.n)
+    UNREAD.subs.add(fn)
+    return () => UNREAD.subs.delete(fn)
+  }, [])
+  return n
+}
+function UnreadPoller() {
+  React.useEffect(() => {
+    let cursor = 0
+    const tick = async () => {
+      const auth = readJson(K_AUTH)
+      if (!auth || !auth.token) return
+      try {
+        const r = await api(auth.server || DEFAULT_SERVER, '/api/messages?since=' + cursor, { token: auth.token })
+        const list = (r && (r.messages || r.list)) || []
+        if (r && typeof r.cursor === 'number') cursor = r.cursor
+        const incoming = list.filter((m) => m && m.from && m.from !== auth.id)
+        if (incoming.length) setUnread(UNREAD.n + incoming.length)
+      } catch { /* offline */ }
     }
+    tick()
+    const t = window.setInterval(tick, 4000)
+    return () => window.clearInterval(t)
+  }, [])
+  return null
+}
+
+function SocialIcon() {
+  const n = useUnread()
+  return h(
+    'span',
+    { style: { position: 'relative', display: 'inline-flex', alignItems: 'center' } },
+    h('span', { style: { display: 'inline-flex' } }, h(UnreadPoller)),
+    n > 0
+      ? h('span', {
+          style: {
+            position: 'absolute', top: '-8px', right: '-12px', padding: '0 4px', height: '14px',
+            lineHeight: '14px', borderRadius: '7px', background: '#ff4d6d', color: '#fff',
+            fontSize: '9.5px', fontWeight: 700, whiteSpace: 'nowrap', pointerEvents: 'none',
+          },
+        }, '⚡×' + (n > 99 ? '99+' : n))
+      : null,
+  )
+}
 
     /** 主区域的整页版本：给标题栏让出 top clearance */
     function SocialPanel() {
+  React.useEffect(() => { setUnread(0) }, [])
       return h(
         'div',
         {
@@ -7774,7 +8852,7 @@ window.__ModuleLoader__.load({
               name: 'sidebar.panellist',
               id: PANEL_ID,
               order: 20,
-              label: () => '社交',
+              label: () => (UNREAD.n > 0 ? '社交 ⚡×' + UNREAD.n : '社交'),
             },
             SocialIcon,
           ),
