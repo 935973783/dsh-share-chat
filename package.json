@@ -44,7 +44,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://gitee.com/laughing-faith/dsh-share-chat.git"
+    "url": "git+https://github.com/935973783/dsh-share-chat.git"
   },
-  "homepage": "https://gitee.com/laughing-faith/dsh-share-chat#readme"
+  "homepage": "https://github.com/935973783/dsh-share-chat#readme",
+  "bugs": {
+    "url": "https://github.com/935973783/dsh-share-chat/issues"
+  }
 }
