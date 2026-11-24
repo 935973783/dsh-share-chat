@@ -8096,24 +8096,36 @@ const seatAvatarEl = (s, size) => {
         selEl.appendChild(bar)
       }
 
-      api(auth.server, '/api/killer/today', { token: auth.token })
-        .then((r) => {
-          day = r.day || ''
-          curSource = r.source || ''
-          curStale = !!r.stale
-          myStars = Number(r.myStars) || 0
-          renderStars()
-          loadShop()
-          puzzles = Array.isArray(r.puzzles) ? r.puzzles : []
-          if (!puzzles.length) {
-            bodyEl.textContent = '今天没有题目'
-            return
-          }
-          applyPuzzle(0, true)
-        })
-        .catch((e) => {
-          bodyEl.textContent = '题目加载失败：' + friendly(e)
-        })
+      // 打开时如果服务器上的题还是旧的，就在本机补跑一次抓取，过十秒再取一次
+      let refreshTried = false
+      const loadToday = () =>
+        api(auth.server, '/api/killer/today', { token: auth.token })
+          .then((r) => {
+            day = r.day || ''
+            curSource = r.source || ''
+            curStale = !!r.stale
+            myStars = Number(r.myStars) || 0
+            renderStars()
+            loadShop()
+            puzzles = Array.isArray(r.puzzles) ? r.puzzles : []
+            if (!puzzles.length) {
+              bodyEl.textContent = '今天没有题目'
+              return
+            }
+            applyPuzzle(0, true)
+            if (r.stale && !refreshTried) {
+              refreshTried = true
+              onToast('今天的题还没更新，正在后台抓')
+              fetch('/api/share-chat/killer-refresh', { method: 'POST' })
+                .then(() => setTimeout(() => loadToday().catch(() => {}), 12000))
+                .catch(() => {})
+            }
+          })
+          .catch((e) => {
+            bodyEl.textContent = '题目加载失败：' + friendly(e)
+          })
+
+      loadToday()
     }
     function SocialView(props) {
       const [auth, setAuth] = useState(() => readJson(K_AUTH))

@@ -13,8 +13,15 @@
  */
 
 import { randomBytes } from 'node:crypto'
+import { existsSync } from 'node:fs'
+import { spawn } from 'node:child_process'
 
 const PREFIX = '/api/share-chat'
+
+/** 每日数独抓取脚本的位置；可用 DSH_KILLER_UPDATER 覆盖 */
+const KILLER_UPDATER =
+  process.env.DSH_KILLER_UPDATER ||
+  'D:\\HuaweiMoveData\\Users\\zhanghao\\Documents\\deepseek-harness\\default-workspace\\tools\\dks-daily-http.mjs'
 
 function json(status, body) {
   return new Response(JSON.stringify(body), {
@@ -48,6 +55,46 @@ function pickTitle(snap) {
 }
 
 export function apply(ctx) {
+  // ── 数独每日补跑 ──
+  // 打开数独时如果发现当天还没抓题，就在本机后台跑一次抓取脚本。
+  // 计划任务要用户登录才跑，这条兜底；只在 loopback 开放。
+  let lastRefresh = 0
+  ctx.inject(['webServer'], (scope) => {
+    scope.effect(() =>
+      scope.webServer.register({
+        path: PREFIX + '/killer-refresh',
+        kind: 'exact',
+        handler: (req, res) => {
+          const done = (status, body) => {
+            res.writeHead(status, {
+              'content-type': 'application/json; charset=utf-8',
+              'cache-control': 'no-store',
+            })
+            res.end(JSON.stringify(body))
+          }
+          if (!isLoopbackOrigin(scope)) return done(403, { error: 'not-loopback' })
+          if (req.method !== 'POST') return done(405, { error: 'method' })
+          // 一分钟内只跑一次，避免反复开窗口刷脚本
+          const now = Date.now()
+          if (now - lastRefresh < 60000) return done(200, { ok: false, reason: 'throttled' })
+          if (!existsSync(KILLER_UPDATER)) return done(200, { ok: false, reason: 'no-script' })
+          lastRefresh = now
+          try {
+            const child = spawn(process.execPath, [KILLER_UPDATER, '--deploy'], {
+              detached: true,
+              stdio: 'ignore',
+              windowsHide: true,
+            })
+            child.unref()
+            return done(200, { ok: true, started: true })
+          } catch (e) {
+            return done(200, { ok: false, reason: String(e && e.message).slice(0, 120) })
+          }
+        },
+      }),
+    )
+  })
+
   // ── 问模型：走 DSH 自己的 LLM 服务（消耗当前账号额度）──
   // 只在 loopback 下开放，公用部署直接 403。
   ctx.inject(['webServer', 'llm'], (scope) => {
