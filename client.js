@@ -286,6 +286,7 @@ window.__ModuleLoader__.load({
 
 .sc-avatar{flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;font-weight:600;color:#fff;user-select:none;overflow:hidden}
 .sc-chip{display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 8px;border-radius:99px;background:rgba(127,127,127,.18);color:var(--dsw-alias-label-secondary,#5b6570);font-size:11px;white-space:nowrap}
+.sc-unread{flex:0 0 auto;min-width:18px;height:18px;padding:0 5px;border-radius:99px;background:#e8434f;color:#fff;font-size:11px;font-weight:600;line-height:18px;text-align:center}
 .sc-err{color:var(--dsw-alias-label-error,#d9534f);font-size:12px}
 
 /* 登录 */
@@ -891,6 +892,8 @@ window.__ModuleLoader__.load({
       const [hiddenChats, setHiddenChats] = useState([])
       const [sideTab, setSideTab] = useState('chats')
       const [myAvatar, setMyAvatar] = useState('')
+      // 未读：会话 key → 条数。清空条件是这个会话被打开
+      const [unread, setUnread] = useState({})
       // Electron 里 window.prompt 不可用，所有需要输入的地方都走这个内联框
       const [inline, setInline] = useState(null)
       const [askMode, setAskMode] = useState(() => readJson('dsh-share-chat.ask') === true)
@@ -971,8 +974,47 @@ window.__ModuleLoader__.load({
         if (r.messages && r.messages.length) {
           cursorRef.current = r.cursor
           setMessages((prev) => prev.concat(r.messages))
+          noteUnread(r.messages)
         }
       }
+
+      /** 新消息里别人发的、且不在当前会话 → 记未读，并弹一条提示 */
+      const noteUnread = (batch) => {
+        const add = {}
+        let latest = null
+        for (const m of batch) {
+          if (!m || m.from === auth.id) continue
+          const key = String(m.to || '').indexOf('g:') === 0 ? m.to : m.from
+          if (!key) continue
+          if (key === activeRef.current) continue
+          add[key] = (add[key] || 0) + 1
+          latest = m
+        }
+        if (!Object.keys(add).length) return
+        setUnread((prev) => {
+          const next = Object.assign({}, prev)
+          for (const k of Object.keys(add)) next[k] = (next[k] || 0) + add[k]
+          return next
+        })
+        if (latest && typeof props.onToast === 'function') {
+          const who = (latest.from || '').toString()
+          const b = latest.body || {}
+          const txt =
+            b.kind === 'image' ? '🖼 图片' : b.kind === 'file' ? '📎 ' + (b.name || '文件') : String(b.text || '').slice(0, 24)
+          props.onToast(who + '：' + txt)
+        }
+      }
+
+      // 打开某个会话就把它的未读清掉
+      useEffect(() => {
+        if (!active) return
+        setUnread((prev) => {
+          if (!prev[active]) return prev
+          const next = Object.assign({}, prev)
+          delete next[active]
+          return next
+        })
+      }, [active])
 
       // 5 秒轮询：消息 + 好友列表（对方加了你这边才看得见）
       useEffect(() => {
@@ -986,6 +1028,7 @@ window.__ModuleLoader__.load({
             if (r.messages && r.messages.length) {
               cursorRef.current = r.cursor
               setMessages((prev) => prev.concat(r.messages))
+              noteUnread(r.messages)
             }
           } catch (e) {
             /* 消息拉取失败不打扰用户，下次再来 */
@@ -1501,6 +1544,9 @@ window.__ModuleLoader__.load({
 
       const thread = messages.filter((m) => m.from === active || m.to === active)
 
+      /** 全部未读总数，顶栏按这个显示 */
+      const totalUnread = Object.keys(unread).reduce((a, k) => a + (unread[k] || 0), 0)
+
       /** 正在上传 / 上传失败的附件，先占位显示，避免「点了没反应」 */
       const renderPending = (p) => {
         const failed = p.status === 'failed'
@@ -1683,7 +1729,7 @@ window.__ModuleLoader__.load({
               onClick: () => setSideTab('chats'),
               title: '会话列表',
             },
-            '💬 会话',
+            '💬 会话' + (totalUnread ? '  ' + (totalUnread > 99 ? '99+' : totalUnread) : ''),
           ),
           h(
             'button',
@@ -1877,6 +1923,16 @@ window.__ModuleLoader__.load({
                         ),
                         h('div', { className: 'sc-friend-last' }, previewOf(lastOf(c.key)) || '还没有消息'),
                       ),
+                      unread[c.key]
+                        ? h(
+                            'span',
+                            {
+                              className: 'sc-unread',
+                              title: unread[c.key] + ' 条未读',
+                            },
+                            unread[c.key] > 99 ? '99+' : String(unread[c.key]),
+                          )
+                        : null,
                     ),
                   ),
             ),
