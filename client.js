@@ -17,7 +17,7 @@ window.__ModuleLoader__.load({
     const K_SERVER = 'dsh-share-chat.server'
     const K_DEV = 'dsh-share-chat.dev'
     const DEFAULT_SERVER = 'https://xdxy-pet.com/relay'
-    const POLL_MS = 5000
+    const POLL_MS = 1500
     /** 内嵌小游戏（微信小游戏的浏览器移植版，和 /api/fish/ 同源） */
     const GAME_URL = 'https://xdxy-pet.com/game/'
 
@@ -1016,9 +1016,10 @@ window.__ModuleLoader__.load({
         })
       }, [active])
 
-      // 5 秒轮询：消息 + 好友列表（对方加了你这边才看得见）
+      // 1.5 秒轮询消息；好友列表每 4 拍（6 秒）才拉一次，省请求
       useEffect(() => {
         let alive = true
+        let beat = 0
         const tick = async () => {
           try {
             const r = await api(auth.server, '/api/messages?since=' + cursorRef.current, {
@@ -1033,6 +1034,7 @@ window.__ModuleLoader__.load({
           } catch (e) {
             /* 消息拉取失败不打扰用户，下次再来 */
           }
+          if (beat++ % 4 !== 0) return
           try {
             const f = await api(auth.server, '/api/friends', { token: auth.token })
             if (!alive) return
