@@ -287,6 +287,9 @@ window.__ModuleLoader__.load({
 .sc-avatar{flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;font-weight:600;color:#fff;user-select:none;overflow:hidden}
 .sc-chip{display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 8px;border-radius:99px;background:rgba(127,127,127,.18);color:var(--dsw-alias-label-secondary,#5b6570);font-size:11px;white-space:nowrap}
 .sc-unread{flex:0 0 auto;min-width:18px;height:18px;padding:0 5px;border-radius:99px;background:#e8434f;color:#fff;font-size:11px;font-weight:600;line-height:18px;text-align:center}
+.sc-update-bar{display:flex;align-items:center;gap:8px;padding:7px 12px;background:#fff6e8;border-bottom:1px solid #f0e0c8;color:#8a5b1f;font-size:12px;flex:0 0 auto}
+.sc-update-bar code{font:600 11.5px ui-monospace,monospace;background:rgba(138,91,31,.10);padding:2px 6px;border-radius:5px}
+.sc-update-x{margin-left:auto;border:none;background:transparent;color:#b08a52;cursor:pointer;font-size:12px;padding:2px 4px}
 .sc-err{color:var(--dsw-alias-label-error,#d9534f);font-size:12px}
 
 /* 登录 */
@@ -894,6 +897,8 @@ window.__ModuleLoader__.load({
       const [myAvatar, setMyAvatar] = useState('')
       // 未读：会话 key → 条数。清空条件是这个会话被打开
       const [unread, setUnread] = useState({})
+      // 有新版本时这里放 { current, latest }，点掉后当天不再提示
+      const [updateInfo, setUpdateInfo] = useState(null)
       // Electron 里 window.prompt 不可用，所有需要输入的地方都走这个内联框
       const [inline, setInline] = useState(null)
       const [askMode, setAskMode] = useState(() => readJson('dsh-share-chat.ask') === true)
@@ -1015,6 +1020,26 @@ window.__ModuleLoader__.load({
           return next
         })
       }, [active])
+
+      // 查一次版本：有新版本就顶一条提示，点掉后当天不再出现
+      useEffect(() => {
+        let alive = true
+        const TODAY = new Date().toISOString().slice(0, 10)
+        ;(async () => {
+          try {
+            const r = await fetch('/api/share-chat/version').then((x) => x.json())
+            if (!alive || !r || !r.behind) return
+            const dismissed = window.localStorage.getItem('dsh-share-chat.updateDismissed')
+            if (dismissed === TODAY) return
+            setUpdateInfo({ current: r.current, latest: r.latest })
+          } catch (e) {
+            /* 查不到就算了 */
+          }
+        })()
+        return () => {
+          alive = false
+        }
+      }, [])
 
       // 1.5 秒轮询消息；好友列表每 4 拍（6 秒）才拉一次，省请求
       useEffect(() => {
@@ -1702,6 +1727,33 @@ window.__ModuleLoader__.load({
       return h(
         'div',
         { className: 'sc-chat', ref: chatRef },
+        updateInfo
+          ? h(
+              'div',
+              { className: 'sc-update-bar' },
+              h(
+                'span',
+                null,
+                '有新版本 ' + updateInfo.latest + '（当前 ' + updateInfo.current + '）· 更新：',
+                h('code', { style: { marginLeft: '2px' } }, 'dsh plugin --profile web add dsh-share-chat'),
+              ),
+              h(
+                'button',
+                {
+                  className: 'sc-update-x',
+                  title: '今天不再提示',
+                  onClick: () => {
+                    window.localStorage.setItem(
+                      'dsh-share-chat.updateDismissed',
+                      new Date().toISOString().slice(0, 10),
+                    )
+                    setUpdateInfo(null)
+                  },
+                },
+                '✕',
+              ),
+            )
+          : null,
         /* 顶栏 */
         h(
           'div',

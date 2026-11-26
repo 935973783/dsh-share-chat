@@ -13,7 +13,7 @@
  */
 
 import { randomBytes } from 'node:crypto'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { spawn } from 'node:child_process'
 
 const PREFIX = '/api/share-chat'
@@ -22,6 +22,29 @@ const PREFIX = '/api/share-chat'
 const KILLER_UPDATER =
   process.env.DSH_KILLER_UPDATER ||
   'D:\\HuaweiMoveData\\Users\\zhanghao\\Documents\\deepseek-harness\\default-workspace\\tools\\dks-daily-http.mjs'
+
+/** 读自己的版本号，用来和 npm 上的最新版比对 */
+let OWN_VERSION = ''
+try {
+  const here = new URL('.', import.meta.url)
+  const pkgUrl = new URL('package.json', here)
+  OWN_VERSION = JSON.parse(readFileSync(pkgUrl, 'utf8')).version || ''
+} catch {
+  OWN_VERSION = ''
+}
+
+/** 版本号比较：a 比 b 新返回 1，旧返回 -1，相同返回 0 */
+function compareVersion(a, b) {
+  const pa = String(a).split('.').map((x) => parseInt(x, 10) || 0)
+  const pb = String(b).split('.').map((x) => parseInt(x, 10) || 0)
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const x = pa[i] || 0
+    const y = pb[i] || 0
+    if (x > y) return 1
+    if (x < y) return -1
+  }
+  return 0
+}
 
 function json(status, body) {
   return new Response(JSON.stringify(body), {
@@ -55,6 +78,39 @@ function pickTitle(snap) {
 }
 
 export function apply(ctx) {
+  // ── 版本检查：告诉前端 npm 上有没有更新的版本 ──
+  let versionCache = { at: 0, latest: '' }
+  ctx.inject(['webServer'], (scope) => {
+    scope.effect(() =>
+      scope.webServer.register({
+        path: PREFIX + '/version',
+        kind: 'exact',
+        resource: async () => {
+          const now = Date.now()
+          if (!versionCache.latest || now - versionCache.at > 3600000) {
+            try {
+              const r = await fetch('https://registry.npmjs.org/dsh-share-chat/latest', {
+                headers: { accept: 'application/json' },
+              })
+              if (r.ok) {
+                const j = await r.json()
+                versionCache = { at: now, latest: String(j.version || '') }
+              }
+            } catch {
+              /* 查不到就算了，不影响使用 */
+            }
+          }
+          const latest = versionCache.latest
+          return json(200, {
+            current: OWN_VERSION,
+            latest,
+            behind: latest ? compareVersion(latest, OWN_VERSION) > 0 : false,
+          })
+        },
+      }),
+    )
+  })
+
   // ── 数独每日补跑 ──
   // 打开数独时如果发现当天还没抓题，就在本机后台跑一次抓取脚本。
   // 计划任务要用户登录才跑，这条兜底；只在 loopback 开放。
