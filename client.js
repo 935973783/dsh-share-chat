@@ -7224,6 +7224,7 @@ const seatAvatarEl = (s, size) => {
         '<button data-up style="padding:4px 9px;border-radius:8px;border:1px solid #3a4152;background:#1d212b;color:#dbe2f0;font:600 11.5px system-ui;cursor:pointer">上传</button>' +
         '<button data-play style="padding:4px 9px;border-radius:8px;border:1px solid #3a4152;background:#1d212b;color:#dbe2f0;font:600 11.5px system-ui;cursor:pointer">暂停</button>' +
         '<button data-size style="padding:4px 9px;border-radius:8px;border:1px solid #3a4152;background:#1d212b;color:#dbe2f0;font:600 11.5px system-ui;cursor:pointer">2×</button>' +
+        '<button data-keys style="padding:4px 9px;border-radius:8px;border:1px solid #3a4152;background:#1d212b;color:#dbe2f0;font:600 11.5px system-ui;cursor:pointer">按键</button>' +
         '<button data-close style="padding:4px 9px;border-radius:8px;border:1px solid #3a4152;background:#1d212b;color:#dbe2f0;font:600 11.5px system-ui;cursor:pointer">✕</button>' +
         '</div>' +
         '<div data-stage style="padding:12px;display:flex;align-items:center;justify-content:center;background:#0b0d12">' +
@@ -7252,16 +7253,47 @@ const seatAvatarEl = (s, size) => {
       let raf = 0
       let scale = 2
       let buttons = {}
-      const KEYMAP = {
-        ArrowUp: 'UP',
-        ArrowDown: 'DOWN',
-        ArrowLeft: 'LEFT',
-        ArrowRight: 'RIGHT',
-        KeyZ: 'A',
-        KeyX: 'B',
-        Enter: 'START',
-        ShiftRight: 'SELECT',
-        ShiftLeft: 'SELECT',
+      let captureFor = null
+      // 按键映射：name → KeyboardEvent.code，用户可改，存在本地
+      const KEY_ORDER = ['UP', 'DOWN', 'LEFT', 'RIGHT', 'A', 'B', 'START', 'SELECT']
+      const KEY_LABEL = {
+        UP: '上',
+        DOWN: '下',
+        LEFT: '左',
+        RIGHT: '右',
+        A: 'A 键',
+        B: 'B 键',
+        START: '开始',
+        SELECT: '选择',
+      }
+      const DEFAULT_KEYS = {
+        UP: 'ArrowUp',
+        DOWN: 'ArrowDown',
+        LEFT: 'ArrowLeft',
+        RIGHT: 'ArrowRight',
+        A: 'KeyZ',
+        B: 'KeyX',
+        START: 'Enter',
+        SELECT: 'ShiftRight',
+      }
+      let keyMap = Object.assign({}, DEFAULT_KEYS)
+      const savedKeys = readJson('dsh-share-chat.nesKeys')
+      if (savedKeys && typeof savedKeys === 'object') {
+        for (const k of KEY_ORDER) if (typeof savedKeys[k] === 'string') keyMap[k] = savedKeys[k]
+      }
+      const saveKeys = () => writeJson('dsh-share-chat.nesKeys', keyMap)
+      const keyName = (code) => {
+        if (!code) return '未设置'
+        return String(code)
+          .replace(/^Key/, '')
+          .replace(/^Digit/, '')
+          .replace(/^Arrow/, '')
+          .replace(/^Numpad/, '小键盘 ')
+          .replace(/Left$/, ' 左')
+          .replace(/Right$/, ' 右')
+          .replace('Space', '空格')
+          .replace('Escape', 'Esc')
+          .toUpperCase()
       }
 
       const setSize = (s) => {
@@ -7495,12 +7527,110 @@ const seatAvatarEl = (s, size) => {
       })
       $('[data-size]').addEventListener('click', () => setSize(scale === 2 ? 3 : scale === 3 ? 1 : 2))
 
+      // ── 按键设置面板 ──
+      let keysPanel = null
+      const renderKeys = () => {
+        if (!keysPanel) return
+        keysPanel.textContent = ''
+        const head = document.createElement('div')
+        head.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:10px'
+        const t = document.createElement('b')
+        t.textContent = '⌨ 按键设置'
+        t.style.cssText = 'font-size:13px'
+        const close = document.createElement('button')
+        close.textContent = '返回'
+        close.style.cssText =
+          'margin-left:auto;padding:4px 10px;border-radius:8px;border:1px solid #3a4152;background:#1d212b;color:#dbe2f0;font:600 11.5px system-ui;cursor:pointer'
+        close.addEventListener('click', () => {
+          captureFor = null
+          keysPanel.remove()
+          keysPanel = null
+        })
+        head.appendChild(t)
+        head.appendChild(close)
+        keysPanel.appendChild(head)
+
+        for (const name of KEY_ORDER) {
+          const row = document.createElement('div')
+          row.style.cssText =
+            'display:flex;align-items:center;gap:10px;padding:7px 10px;margin-bottom:6px;border-radius:9px;border:1px solid #2b3040;background:#1a1d26'
+          const lab = document.createElement('span')
+          lab.textContent = KEY_LABEL[name]
+          lab.style.cssText = 'font-size:12px;flex:1;color:#c6cede'
+          const waiting = captureFor && captureFor.name === name
+          const btn = document.createElement('button')
+          btn.textContent = waiting ? '按任意键…' : keyName(keyMap[name])
+          btn.style.cssText =
+            'min-width:88px;padding:5px 10px;border-radius:7px;font:600 11.5px ui-monospace,monospace;cursor:pointer;' +
+            (waiting
+              ? 'border:1px solid #ffd36e;background:#3a2f14;color:#ffd36e'
+              : 'border:1px solid #3a4152;background:#12151c;color:#dbe2f0')
+          btn.addEventListener('click', () => {
+            captureFor = { name }
+            renderKeys()
+          })
+          row.appendChild(lab)
+          row.appendChild(btn)
+          keysPanel.appendChild(row)
+        }
+
+        const reset = document.createElement('button')
+        reset.textContent = '恢复默认'
+        reset.style.cssText =
+          'margin-top:4px;padding:6px 14px;border-radius:8px;border:1px solid #3a4152;background:#1d212b;color:#dbe2f0;font:600 11.5px system-ui;cursor:pointer'
+        reset.addEventListener('click', () => {
+          keyMap = Object.assign({}, DEFAULT_KEYS)
+          saveKeys()
+          captureFor = null
+          renderKeys()
+        })
+        keysPanel.appendChild(reset)
+
+        const tip = document.createElement('div')
+        tip.textContent = '点右边那格，然后按下想用的键。Esc 取消。设置只存在这台电脑。'
+        tip.style.cssText = 'margin-top:10px;font-size:11px;color:#6b7382;line-height:1.7'
+        keysPanel.appendChild(tip)
+      }
+
+      $('[data-keys]').addEventListener('click', () => {
+        if (keysPanel) {
+          captureFor = null
+          keysPanel.remove()
+          keysPanel = null
+          return
+        }
+        keysPanel = document.createElement('div')
+        keysPanel.setAttribute('data-keys-panel', '1')
+        keysPanel.style.cssText =
+          'position:absolute;inset:0;z-index:6;background:rgba(20,22,28,.98);padding:14px;overflow:auto'
+        wrap.appendChild(keysPanel)
+        renderKeys()
+      })
+
       const onKey = (e) => {
         if (!document.body.contains(wrap)) return
+        // 正在改键：把这一下吃成新的绑定
+        if (captureFor) {
+          e.preventDefault()
+          e.stopPropagation()
+          if (e.type !== 'keydown') return
+          if (e.code === 'Escape') {
+            captureFor = null
+            renderKeys()
+            return
+          }
+          keyMap[captureFor.name] = e.code
+          saveKeys()
+          captureFor = null
+          renderKeys()
+          return
+        }
         const t = e.target
         if (t && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable)) return
-        const name = KEYMAP[e.code]
-        if (!name || !nes || !nes._code) return
+        if (!nes || !nes._code) return
+        let name = null
+        for (const k of KEY_ORDER) if (keyMap[k] === e.code) name = k
+        if (!name) return
         e.preventDefault()
         const btn = nes._code[name]
         if (e.type === 'keydown') {
