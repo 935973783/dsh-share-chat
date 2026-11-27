@@ -287,6 +287,8 @@ window.__ModuleLoader__.load({
 .sc-avatar{flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;font-weight:600;color:#fff;user-select:none;overflow:hidden}
 .sc-chip{display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 8px;border-radius:99px;background:rgba(127,127,127,.18);color:var(--dsw-alias-label-secondary,#5b6570);font-size:11px;white-space:nowrap}
 .sc-unread{flex:0 0 auto;min-width:18px;height:18px;padding:0 5px;border-radius:99px;background:#e8434f;color:#fff;font-size:11px;font-weight:600;line-height:18px;text-align:center}
+.sc-menu-item{display:flex;align-items:center;gap:8px;padding:7px 9px;border:none;border-radius:8px;background:transparent;color:inherit;font:13px system-ui;cursor:pointer}
+.sc-menu-item:hover{background:rgba(128,128,128,.16)}
 .sc-update-bar{display:flex;align-items:center;gap:8px;padding:7px 12px;background:#fff6e8;border-bottom:1px solid #f0e0c8;color:#8a5b1f;font-size:12px;flex:0 0 auto}
 .sc-update-bar code{font:600 11.5px ui-monospace,monospace;background:rgba(138,91,31,.10);padding:2px 6px;border-radius:5px}
 .sc-update-x{margin-left:auto;border:none;background:transparent;color:#b08a52;cursor:pointer;font-size:12px;padding:2px 4px}
@@ -894,6 +896,7 @@ window.__ModuleLoader__.load({
       const [groups, setGroups] = useState([])
       const [hiddenChats, setHiddenChats] = useState([])
       const [sideTab, setSideTab] = useState('chats')
+      const [menuOpen, setMenuOpen] = useState(false)
       const [myAvatar, setMyAvatar] = useState('')
       // 未读：会话 key → 条数。清空条件是这个会话被打开
       const [unread, setUnread] = useState({})
@@ -1841,92 +1844,89 @@ window.__ModuleLoader__.load({
             '👥 通讯录',
           ),
           h(
-            'button',
-            {
-              className: 'sc-btn' + (campMode ? ' sc-btn-primary' : ''),
-              onClick: () => setCampMode((v) => !v),
-              title: '串门：看看好友的营地',
-            },
-            campMode ? '💬 会话' : '🏕 串门',
-          ),
-          h(
-            'button',
-            {
-              className: 'sc-btn',
-              onClick: () => openMeeting({ auth, onToast: (m) => setErr(m) }),
-              title: '音视频会议（点对点，无时长限制）',
-            },
-            '📹 开会',
-          ),
-          h('button', { className: 'sc-btn', onClick: props.onOpenGame, title: '玩一把鱼塘钓鱼' }, '🎮 钓鱼'),
-          h(
-            'button',
-            {
-              className: 'sc-btn',
-              onClick: () => openNes({ auth, onToast: (m) => setErr(m), friends }),
-              title: '红白机：载入 .nes 自己玩',
-            },
-            '🕹 红白机',
-          ),
-          h(
-            'button',
-            {
-              className: 'sc-btn',
-              onClick: () => openKtv({ auth, onToast: (m) => setErr(m), target: active }),
-              title: '一起唱歌：同步伴奏 + 语音',
-            },
-            '🎤 KTV',
-          ),
-          h(
-            'button',
-            {
-              className: 'sc-btn',
-              onClick: () => {
-                try {
-                  window.dispatchEvent(new CustomEvent('dsh-share-chat:pet-show'))
-                } catch (e) {}
+            'div',
+            { style: { position: 'relative' } },
+            h(
+              'button',
+              {
+                className: 'sc-btn' + (menuOpen ? ' sc-btn-primary' : ''),
+                onClick: () => setMenuOpen((v) => !v),
+                title: '更多',
               },
-              title: '叫出桌宠（形象独立浮在界面上）',
-            },
-            '🐳',
+              '☰ 更多',
+            ),
+            menuOpen
+              ? h(
+                  'div',
+                  {
+                    style: {
+                      position: 'absolute',
+                      right: 0,
+                      top: '38px',
+                      zIndex: 60,
+                      width: '212px',
+                      padding: '6px',
+                      borderRadius: '12px',
+                      background: 'var(--dsw-alias-bg-elevated,#fff)',
+                      border: '1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.22))',
+                      boxShadow: '0 16px 40px rgba(0,0,0,.18)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '2px',
+                    },
+                  },
+                  ...[
+                    ['🏕', campMode ? '回到会话视图' : '串门', '看看好友的营地', () => setCampMode((v) => !v)],
+                    ['📹', '开会', '音视频会议', () => openMeeting({ auth, onToast: (m) => setErr(m) })],
+                    ['🎮', '钓鱼', '小游戏窗口', () => props.onOpenGame()],
+                    ['🕹', '红白机', '载入 .nes，可联机', () => openNes({ auth, onToast: (m) => setErr(m), friends })],
+                    ['🎤', 'KTV', '同步伴奏一起唱', () => openKtv({ auth, onToast: (m) => setErr(m), target: active })],
+                    ['🀄', '麻将', '缺的位置机器人补', () => openMahjong({ auth, onToast: (m) => setErr(m) })],
+                    ['🏰', '阿瓦隆', '5-10 人推理局', () => openAvalon({ auth, onToast: (m) => setErr(m) })],
+                    ['🧩', '数独', '每日杀手数独', () => openKiller({ auth, onToast: (m) => setErr(m) })],
+                    [
+                      '🐳',
+                      '桌宠',
+                      '叫出小人儿',
+                      () => {
+                        try {
+                          window.dispatchEvent(new CustomEvent('dsh-share-chat:pet-show'))
+                        } catch (e) {}
+                      },
+                    ],
+                    ['📱', '手机预览', '开发用', () => openMobilePreview({ auth, onToast: (m) => setErr(m) })],
+                  ].map(([ico, label, tip, fn]) =>
+                    h(
+                      'button',
+                      {
+                        key: label,
+                        title: tip,
+                        className: 'sc-menu-item',
+                        onClick: () => {
+                          setMenuOpen(false)
+                          fn()
+                        },
+                      },
+                      h('span', { style: { width: '20px', textAlign: 'center' } }, ico),
+                      h('span', { style: { flex: 1, textAlign: 'left' } }, label),
+                    ),
+                  ),
+                  h('div', { style: { height: '1px', background: 'rgba(128,128,128,.18)', margin: '4px 2px' } }),
+                  h(
+                    'button',
+                    {
+                      className: 'sc-menu-item',
+                      onClick: () => {
+                        setMenuOpen(false)
+                        props.onLogout()
+                      },
+                    },
+                    h('span', { style: { width: '20px', textAlign: 'center' } }, '🚪'),
+                    h('span', { style: { flex: 1, textAlign: 'left' } }, '退出'),
+                  ),
+                )
+              : null,
           ),
-          h(
-            'button',
-            {
-              className: 'sc-btn',
-              onClick: () => openMahjong({ auth, onToast: (m) => setErr(m) }),
-              title: '开一桌麻将（缺的位置机器人补）',
-            },
-            '🀄 麻将',
-          ),
-          h(
-            'button',
-            {
-              className: 'sc-btn',
-              onClick: () => openAvalon({ auth, onToast: (m) => setErr(m) }),
-              title: '阿瓦隆（5-10 人，缺的位置机器人补）',
-            },
-            '🏰 阿瓦隆',
-          ),
-          h(
-            'button',
-            {
-              className: 'sc-btn',
-              onClick: () => openMobilePreview({ auth, onToast: (m) => setErr(m) }),
-              title: '手机浏览器预览（开发用）',
-            },
-            '📱 预览',
-          ),
-          h(
-            'button',
-            {
-              className: 'sc-btn',
-              onClick: () => openKiller({ auth, onToast: (m) => setErr(m) }),
-              title: '每日杀手数独',
-            },
-            '🧩 数独',
-          ),
-          h('button', { className: 'sc-btn sc-btn-ghost', onClick: props.onLogout }, '退出'),
         ),
         /* 主体 */
         campMode
