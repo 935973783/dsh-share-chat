@@ -7226,6 +7226,8 @@ const seatAvatarEl = (s, size) => {
         '<button data-play style="padding:4px 9px;border-radius:8px;border:1px solid #3a4152;background:#1d212b;color:#dbe2f0;font:600 11.5px system-ui;cursor:pointer">暂停</button>' +
         '<button data-size style="padding:4px 9px;border-radius:8px;border:1px solid #3a4152;background:#1d212b;color:#dbe2f0;font:600 11.5px system-ui;cursor:pointer">2×</button>' +
         '<button data-keys style="padding:4px 9px;border-radius:8px;border:1px solid #3a4152;background:#1d212b;color:#dbe2f0;font:600 11.5px system-ui;cursor:pointer">按键</button>' +
+        '<button data-net style="padding:4px 9px;border-radius:8px;border:1px solid #3a4152;background:#1d212b;color:#dbe2f0;font:600 11.5px system-ui;cursor:pointer">联机</button>' +
+        '<span data-net-status style="font-size:11px;color:#7fd3ff"></span>' +
         '<button data-close style="padding:4px 9px;border-radius:8px;border:1px solid #3a4152;background:#1d212b;color:#dbe2f0;font:600 11.5px system-ui;cursor:pointer">✕</button>' +
         '</div>' +
         '<div data-stage style="padding:12px;display:flex;align-items:center;justify-content:center;background:#0b0d12">' +
@@ -7257,6 +7259,135 @@ const seatAvatarEl = (s, size) => {
       let captureFor = null
       let padState = {}
       let padSeen = false
+
+      /* ── 联机（锁步）：两边各跑模拟器，只交换按键 ── */
+      const BIT_ORDER = ['UP', 'DOWN', 'LEFT', 'RIGHT', 'A', 'B', 'START', 'SELECT']
+      const net = {
+        active: false,
+        side: '',
+        room: '',
+        frame: 0,
+        delay: 6,
+        mine: new Map(), // frame → bits（我按的）
+        theirs: new Map(), // frame → bits（对方按的）
+        unsent: [],
+        prevMine: [false, false, false, false, false, false, false, false],
+        prevTheirs: [false, false, false, false, false, false, false, false],
+        pollTimer: 0,
+        lastSum: 0,
+        verdict: '',
+        peerPresent: false,
+      }
+
+      /** 当前键盘 + 手柄的按键状态，合成为一个 8 位掩码 */
+      const localBits = () => {
+        const st = {}
+        for (const k of KEY_ORDER) st[k] = !!buttons[k] || !!padState[k]
+        const pad = readPad()
+        if (pad) {
+          const w = padWanted(pad)
+          for (const k of KEY_ORDER) if (w[k]) st[k] = true
+        }
+        let v = 0
+        for (let i = 0; i < 8; i++) if (st[BIT_ORDER[i]]) v |= 1 << i
+        return v
+      }
+
+      const applyBits = (port, bits, prev) => {
+        if (!nes || !nes._code) return
+        for (let i = 0; i < 8; i++) {
+          const on = !!(bits & (1 << i))
+          if (on === prev[i]) continue
+          prev[i] = on
+          const code = nes._code[BIT_ORDER[i]]
+          if (on) nes.buttonDown(port, code)
+          else nes.buttonUp(port, code)
+        }
+      }
+
+      const flushMine = async () => {
+        if (!net.unsent.length || !net.room) return
+        const list = net.unsent.splice(0, net.unsent.length)
+        try {
+          await fetch(auth.server + '/api/nes/net/rooms/' + net.room + '/inputs', {
+            method: 'POST',
+            headers: { authorization: 'Bearer ' + auth.token, 'content-type': 'application/json' },
+            body: JSON.stringify({ list }),
+          })
+        } catch (e) {
+          net.unsent.unshift(...list)
+        }
+      }
+
+      const pollPeer = async () => {
+        if (!net.active || !net.room) return
+        try {
+          const r = await fetch(
+            auth.server + '/api/nes/net/rooms/' + net.room + '/inputs?since=' + net.frame,
+            { headers: { authorization: 'Bearer ' + auth.token } },
+          ).then((x) => x.json())
+          if (r && Array.isArray(r.frames)) {
+            net.peerPresent = !!r.present
+            for (const [f, b] of r.frames) net.theirs.set(f, b)
+            // 只留还在用的帧
+            for (const k of net.theirs.keys()) if (k < net.frame - 30) net.theirs.delete(k)
+          }
+        } catch (e) {}
+      }
+
+      const checksum = () => {
+        try {
+          const d = ctx2d.getImageData(0, 0, 256, 240).data
+          let s = 0
+          for (let i = 0; i < d.length; i += 97) s = (s * 31 + d[i]) & 0xffffff
+          return s
+        } catch (e) {
+          return 0
+        }
+      }
+
+      const postSum = async () => {
+        if (!net.room) return
+        try {
+          const r = await fetch(auth.server + '/api/nes/net/rooms/' + net.room + '/sum', {
+            method: 'POST',
+            headers: { authorization: 'Bearer ' + auth.token, 'content-type': 'application/json' },
+            body: JSON.stringify({ f: net.frame, s: checksum() }),
+          }).then((x) => x.json())
+          if (r && r.verdict) {
+            net.verdict = r.verdict === 'ok' ? '同步正常' : r.verdict === 'mismatch' ? '已不同步' : '等待校验'
+            const el = $('[data-net-status]')
+            if (el) el.textContent = net.verdict + ' · 第 ' + net.frame + ' 帧'
+          }
+        } catch (e) {}
+      }
+
+      /** 跑一帧锁步：两边输入都到齐才推进 */
+      const netStep = () => {
+        const f = net.frame
+        const myBits = localBits()
+        net.mine.set(f + net.delay, myBits)
+        net.unsent.push({ f: f + net.delay, b: myBits })
+
+        if (!net.mine.has(f) || !net.theirs.has(f)) {
+          const el = $('[data-net-status]')
+          if (el) el.textContent = '等待对方… 第 ' + f + ' 帧'
+          if (net.unsent.length > 40) flushMine()
+          return false
+        }
+        applyBits(1, net.mine.get(f), net.prevMine)
+        applyBits(2, net.theirs.get(f), net.prevTheirs)
+        nes.frame()
+        net.frame++
+        net.mine.delete(f - 20)
+        net.theirs.delete(f - 20)
+
+        if (net.unsent.length >= 6) flushMine()
+        if (net.frame % 90 === 0) postSum()
+        const el = $('[data-net-status]')
+        if (el && net.frame % 30 === 0) el.textContent = '联机中 · 第 ' + net.frame + ' 帧'
+        return true
+      }
 
       /** 读第一个手柄，映射成 NES 的八个键 */
       const readPad = () => {
@@ -7410,8 +7541,12 @@ const seatAvatarEl = (s, size) => {
         const step = () => {
           if (!running) return
           try {
-            syncPad()
-            nes.frame()
+            if (net.active) {
+              netStep()
+            } else {
+              syncPad()
+              nes.frame()
+            }
           } catch (e) {
             running = false
             onToast('模拟器出错：' + (e && e.message))
@@ -7671,6 +7806,183 @@ const seatAvatarEl = (s, size) => {
           'position:absolute;inset:0;z-index:6;background:rgba(20,22,28,.98);padding:14px;overflow:auto'
         wrap.appendChild(keysPanel)
         renderKeys()
+      })
+
+      // ── 联机面板 ──
+      let netPanel = null
+      const renderNet = () => {
+        if (!netPanel) return
+        netPanel.textContent = ''
+        const head = document.createElement('div')
+        head.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:10px'
+        const t = document.createElement('b')
+        t.textContent = '🔗 联机（锁步）'
+        t.style.cssText = 'font-size:13px'
+        const close = document.createElement('button')
+        close.textContent = '返回'
+        close.style.cssText =
+          'margin-left:auto;padding:4px 10px;border-radius:8px;border:1px solid #3a4152;background:#1d212b;color:#dbe2f0;font:600 11.5px system-ui;cursor:pointer'
+        close.addEventListener('click', () => {
+          netPanel.remove()
+          netPanel = null
+        })
+        head.appendChild(t)
+        head.appendChild(close)
+        netPanel.appendChild(head)
+
+        const status = document.createElement('div')
+        status.style.cssText = 'font-size:12px;color:#9fb0c8;margin-bottom:10px;line-height:1.8;white-space:pre-line'
+        const row = document.createElement('div')
+        row.style.cssText = 'display:flex;gap:8px;align-items:center;flex-wrap:wrap'
+
+        const mkBtn = (label, fn, primary) => {
+          const b = document.createElement('button')
+          b.textContent = label
+          b.style.cssText =
+            'padding:6px 14px;border-radius:8px;font:600 12px system-ui;cursor:pointer;' +
+            (primary
+              ? 'border:none;background:linear-gradient(135deg,#4f8cff,#8a6bff);color:#fff'
+              : 'border:1px solid #3a4152;background:#1d212b;color:#dbe2f0')
+          b.addEventListener('click', fn)
+          return b
+        }
+
+        if (!net.room) {
+          status.textContent =
+            '一个人开房，另一个人输入房间号加入。两边都要先用「打开 ROM」载入同一个游戏，然后点「开始同步」。'
+          const inp = document.createElement('input')
+          inp.placeholder = '房间号'
+          inp.style.cssText =
+            'width:110px;padding:6px 8px;border-radius:8px;border:1px solid #3a4152;background:#12151c;color:#dbe2f0;font:12px ui-monospace,monospace'
+          row.appendChild(
+            mkBtn(
+              '开房',
+              async () => {
+                try {
+                  const r = await fetch(auth.server + '/api/nes/net/rooms', {
+                    method: 'POST',
+                    headers: { authorization: 'Bearer ' + auth.token, 'content-type': 'application/json' },
+                    body: '{}',
+                  }).then((x) => x.json())
+                  if (!r || !r.room) throw new Error((r && r.error) || '开房失败')
+                  net.room = r.room.id
+                  net.side = 'host'
+                  renderNet()
+                } catch (e) {
+                  onToast('开房失败：' + e.message)
+                }
+              },
+              true,
+            ),
+          )
+          row.appendChild(inp)
+          row.appendChild(
+            mkBtn('加入', async () => {
+              const code = String(inp.value || '').trim()
+              if (!code) return onToast('先填房间号')
+              try {
+                const r = await fetch(auth.server + '/api/nes/net/rooms/' + code + '/join', {
+                  method: 'POST',
+                  headers: { authorization: 'Bearer ' + auth.token, 'content-type': 'application/json' },
+                  body: '{}',
+                }).then((x) => x.json())
+                if (!r || !r.side) throw new Error((r && r.error) || '加入失败')
+                net.room = code
+                net.side = r.side
+                renderNet()
+              } catch (e) {
+                onToast('加入失败：' + e.message)
+              }
+            }),
+          )
+        } else {
+          status.textContent =
+            '房间 ' +
+            net.room +
+            ' · 我是' +
+            (net.side === 'host' ? '主机（1P）' : '客机（2P）') +
+            '\n' +
+            (canvas ? 'ROM 已载入' : '⚠ 还没载入 ROM') +
+            ' · ' +
+            (net.peerPresent ? '对方已进房' : '等对方进房')
+          row.appendChild(
+            mkBtn(
+              net.active ? '停止' : '开始同步',
+              async () => {
+                if (net.active) {
+                  net.active = false
+                  cancelAnimationFrame(raf)
+                  running = false
+                  window.clearInterval(net.pollTimer)
+                  const el = $('[data-net-status]')
+                  if (el) el.textContent = ''
+                  renderNet()
+                  return
+                }
+                if (!canvas) return onToast('先载入 ROM，再开始同步')
+                net.frame = 0
+                net.mine.clear()
+                net.theirs.clear()
+                net.unsent = []
+                net.prevMine = [false, false, false, false, false, false, false, false]
+                net.prevTheirs = [false, false, false, false, false, false, false, false]
+                net.active = true
+                net.pollTimer = window.setInterval(pollPeer, 120)
+                await pollPeer()
+                if (!net.peerPresent) {
+                  net.active = false
+                  window.clearInterval(net.pollTimer)
+                  renderNet()
+                  return onToast('对方还没进房间')
+                }
+                startLoop()
+                renderNet()
+              },
+              !net.active,
+            ),
+          )
+          row.appendChild(
+            mkBtn('离开', async () => {
+              try {
+                await fetch(auth.server + '/api/nes/net/rooms/' + net.room + '/leave', {
+                  method: 'POST',
+                  headers: { authorization: 'Bearer ' + auth.token, 'content-type': 'application/json' },
+                  body: '{}',
+                })
+              } catch (e) {}
+              net.active = false
+              net.room = ''
+              net.side = ''
+              window.clearInterval(net.pollTimer)
+              cancelAnimationFrame(raf)
+              running = false
+              renderNet()
+            }),
+          )
+        }
+
+        netPanel.appendChild(status)
+        netPanel.appendChild(row)
+
+        const tip = document.createElement('div')
+        tip.textContent =
+          '两边必须载入同一个 ROM 文件。联机时每一帧都要等到对方的按键才前进，网络卡顿时画面会顿一下，但两边永远一致。'
+        tip.style.cssText = 'margin-top:12px;font-size:11px;color:#6b7382;line-height:1.8'
+        netPanel.appendChild(tip)
+      }
+
+      $('[data-net]').addEventListener('click', () => {
+        if (netPanel) {
+          netPanel.remove()
+          netPanel = null
+          return
+        }
+        netPanel = document.createElement('div')
+        netPanel.setAttribute('data-net-panel', '1')
+        netPanel.style.cssText =
+          'position:absolute;inset:0;z-index:6;background:rgba(20,22,28,.98);padding:14px;overflow:auto'
+        wrap.appendChild(netPanel)
+        renderNet()
       })
 
       const onKey = (e) => {
