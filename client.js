@@ -7808,20 +7808,272 @@ const seatAvatarEl = (s, size) => {
         renderKeys()
       })
 
-      // ── 联机面板 ──
+      // ── 联机：大厅 / 房间 / 准备 / 开局 ──
       let netPanel = null
+      let roomTimer = 0
+      let lobbyRooms = []
+      let roomInfo = null
+
+      const NET_H = () => ({
+        authorization: 'Bearer ' + auth.token,
+        'content-type': 'application/json',
+      })
+      const netGet = (u) => fetch(auth.server + u, { headers: NET_H() }).then((x) => x.json())
+      const netPost = (u, body) =>
+        fetch(auth.server + u, { method: 'POST', headers: NET_H(), body: JSON.stringify(body || {}) }).then((x) =>
+          x.json(),
+        )
+
+      const stopRoomPoll = () => {
+        window.clearInterval(roomTimer)
+        roomTimer = 0
+      }
+
+      const loadRoom = async () => {
+        if (!net.room) return
+        try {
+          const r = await netGet('/api/nes/net/rooms/' + net.room)
+          if (r && r.room) {
+            roomInfo = r.room
+            net.side = r.me || net.side
+          }
+        } catch (e) {}
+      }
+
+      const startRoomPoll = () => {
+        stopRoomPoll()
+        roomTimer = window.setInterval(async () => {
+          if (!netPanel || !net.room) return
+          await loadRoom()
+          if (netPanel) renderNet()
+        }, 1200)
+      }
+
+      const mkBtn2 = (label, fn, primary, disabled) => {
+        const b = document.createElement('button')
+        b.textContent = label
+        b.disabled = !!disabled
+        b.style.cssText =
+          'padding:7px 15px;border-radius:9px;font:600 12px system-ui;cursor:' +
+          (disabled ? 'default' : 'pointer') +
+          ';opacity:' +
+          (disabled ? '.45' : '1') +
+          ';' +
+          (primary
+            ? 'border:none;background:linear-gradient(135deg,#4f8cff,#8a6bff);color:#fff'
+            : 'border:1px solid #3a4152;background:#1d212b;color:#dbe2f0')
+        if (!disabled) b.addEventListener('click', fn)
+        return b
+      }
+
+      const seatCard = (title, who, ready, isMe) => {
+        const card = document.createElement('div')
+        card.style.cssText =
+          'display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:12px;' +
+          'border:1.5px solid ' +
+          (who ? (ready ? '#3ddc97' : '#3a4152') : '#262b36') +
+          ';background:#1a1d26'
+        const dot = document.createElement('div')
+        dot.style.cssText =
+          'width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;' +
+          'font:700 12px system-ui;color:#fff;background:' +
+          (who ? (ready ? '#2f8f65' : '#4a5568') : '#2b3040')
+        dot.textContent = who ? String(who).slice(-1) : '＋'
+        card.appendChild(dot)
+        const info = document.createElement('div')
+        info.style.cssText = 'flex:1;min-width:0'
+        const nm = document.createElement('div')
+        nm.textContent = who ? who + (isMe ? '（我）' : '') : '空位'
+        nm.style.cssText = 'font-size:12.5px;font-weight:650;color:#dbe2f0'
+        const st = document.createElement('div')
+        st.textContent = !who ? '等人进来' : ready ? '已准备' : '没准备'
+        st.style.cssText = 'font-size:11px;color:' + (ready ? '#6ad38f' : '#8b93a5')
+        info.appendChild(nm)
+        info.appendChild(st)
+        card.appendChild(info)
+        const tag = document.createElement('span')
+        tag.textContent = title
+        tag.style.cssText = 'font-size:10.5px;color:#8b93a5'
+        card.appendChild(tag)
+        return card
+      }
+
+      const renderLobbyView = (status, row) => {
+        status.textContent = '选一个房间加入，或者自己开一间。两边都要先载入同一个 ROM。'
+        row.appendChild(
+          mkBtn2(
+            '开一间',
+            async () => {
+              try {
+                const r = await netPost('/api/nes/net/rooms')
+                if (!r || !r.room) throw new Error((r && r.error) || '开房失败')
+                net.room = r.room.id
+                net.side = 'host'
+                roomInfo = null
+                await loadRoom()
+                startRoomPoll()
+                renderNet()
+              } catch (e) {
+                onToast('开房失败：' + e.message)
+              }
+            },
+            true,
+          ),
+        )
+        const inp = document.createElement('input')
+        inp.placeholder = '房间号'
+        inp.style.cssText =
+          'width:100px;padding:7px 9px;border-radius:8px;border:1px solid #3a4152;background:#12151c;color:#dbe2f0;font:12px ui-monospace,monospace'
+        row.appendChild(inp)
+        row.appendChild(
+          mkBtn2('加入', async () => {
+            const code = String(inp.value || '').trim()
+            if (!code) return onToast('先填房间号')
+            try {
+              const r = await netPost('/api/nes/net/rooms/' + code + '/join')
+              if (!r || !r.side) throw new Error((r && r.error) || '加入失败')
+              net.room = code
+              net.side = r.side
+              roomInfo = null
+              await loadRoom()
+              startRoomPoll()
+              renderNet()
+            } catch (e) {
+              onToast('加入失败：' + e.message)
+            }
+          }),
+        )
+
+        const list = document.createElement('div')
+        list.style.cssText = 'margin-top:14px'
+        const title = document.createElement('div')
+        title.textContent = '房间列表'
+        title.style.cssText = 'font-size:12px;color:#8b93a5;margin-bottom:8px'
+        list.appendChild(title)
+        if (!lobbyRooms.length) {
+          const empty = document.createElement('div')
+          empty.textContent = '现在没人开房。'
+          empty.style.cssText = 'font-size:12px;color:#5d6577'
+          list.appendChild(empty)
+        }
+        for (const r of lobbyRooms) {
+          const rowEl = document.createElement('div')
+          rowEl.style.cssText =
+            'display:flex;align-items:center;gap:10px;padding:9px 11px;margin-bottom:6px;border-radius:10px;border:1px solid #2b3040;background:#1a1d26'
+          const t = document.createElement('div')
+          t.style.cssText = 'flex:1;font-size:12px;color:#dbe2f0'
+          t.textContent = '#' + r.id + '  ' + r.hostName + (r.guestName ? ' vs ' + r.guestName : '  · 等人')
+          rowEl.appendChild(t)
+          rowEl.appendChild(
+            mkBtn2(r.full || r.started ? '满了' : '加入', async () => {
+              try {
+                const j = await netPost('/api/nes/net/rooms/' + r.id + '/join')
+                if (!j || !j.side) throw new Error((j && j.error) || '加入失败')
+                net.room = r.id
+                net.side = j.side
+                roomInfo = null
+                await loadRoom()
+                startRoomPoll()
+                renderNet()
+              } catch (e) {
+                onToast('加入失败：' + e.message)
+              }
+            }, false, r.full || r.started),
+          )
+          list.appendChild(rowEl)
+        }
+        return list
+      }
+
+      const renderRoomView = (status, row) => {
+        const info2 = roomInfo || { id: net.room, host: '', guest: '', ready: {} }
+        const amHost = net.side === 'host'
+        const myReady = !!(info2.ready && info2.ready[net.side])
+        const bothReady = !!(info2.ready && info2.ready.host && info2.ready.guest)
+        status.textContent =
+          '房间 ' +
+          net.room +
+          ' · 我是' +
+          (amHost ? '主机（1P）' : '客机（2P）') +
+          '\n' +
+          (canvas ? 'ROM 已载入' : '⚠ 还没载入 ROM')
+
+        const seats = document.createElement('div')
+        seats.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:10px 0'
+        seats.appendChild(seatCard('1P', info2.hostName || info2.host, !!info2.ready.host, amHost))
+        seats.appendChild(seatCard('2P', info2.guestName || info2.guest, !!info2.ready.guest, !amHost))
+
+        row.appendChild(
+          mkBtn2(myReady ? '取消准备' : '准备', async () => {
+            try {
+              await netPost('/api/nes/net/rooms/' + net.room + '/ready')
+              await loadRoom()
+              renderNet()
+            } catch (e) {
+              onToast('操作失败：' + e.message)
+            }
+          }, !myReady),
+        )
+        if (amHost) {
+          row.appendChild(
+            mkBtn2(
+              bothReady ? '开局' : '等待双方准备…',
+              async () => {
+                try {
+                  const r = await netPost('/api/nes/net/rooms/' + net.room + '/start')
+                  if (r && r.error) throw new Error(r.error)
+                  net.frame = 0
+                  net.mine.clear()
+                  net.theirs.clear()
+                  net.unsent = []
+                  net.prevMine = [false, false, false, false, false, false, false, false]
+                  net.prevTheirs = [false, false, false, false, false, false, false, false]
+                  net.active = true
+                  net.pollTimer = window.setInterval(pollPeer, 120)
+                  startLoop()
+                  netPanel && netPanel.remove()
+                  netPanel = null
+                  onToast('开局！')
+                } catch (e) {
+                  onToast('开局失败：' + e.message)
+                }
+              },
+              bothReady,
+              !bothReady,
+            ),
+          )
+        }
+        row.appendChild(
+          mkBtn2('离开', async () => {
+            try {
+              await netPost('/api/nes/net/rooms/' + net.room + '/leave')
+            } catch (e) {}
+            net.active = false
+            net.room = ''
+            net.side = ''
+            roomInfo = null
+            stopRoomPoll()
+            window.clearInterval(net.pollTimer)
+            cancelAnimationFrame(raf)
+            running = false
+            renderNet()
+          }),
+        )
+        return seats
+      }
+
       const renderNet = () => {
         if (!netPanel) return
         netPanel.textContent = ''
         const head = document.createElement('div')
         head.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:10px'
         const t = document.createElement('b')
-        t.textContent = '🔗 联机（锁步）'
+        t.textContent = '🔗 红白机联机'
         t.style.cssText = 'font-size:13px'
         const close = document.createElement('button')
         close.textContent = '返回'
         close.style.cssText =
-          'margin-left:auto;padding:4px 10px;border-radius:8px;border:1px solid #3a4152;background:#1d212b;color:#dbe2f0;font:600 11.5px system-ui;cursor:pointer'
+          'margin-left:auto;padding:5px 11px;border-radius:8px;border:1px solid #3a4152;background:#1d212b;color:#dbe2f0;font:600 11.5px system-ui;cursor:pointer'
         close.addEventListener('click', () => {
           netPanel.remove()
           netPanel = null
@@ -7831,150 +8083,27 @@ const seatAvatarEl = (s, size) => {
         netPanel.appendChild(head)
 
         const status = document.createElement('div')
-        status.style.cssText = 'font-size:12px;color:#9fb0c8;margin-bottom:10px;line-height:1.8;white-space:pre-line'
+        status.style.cssText = 'font-size:12px;color:#9fb0c8;line-height:1.8;white-space:pre-line'
         const row = document.createElement('div')
-        row.style.cssText = 'display:flex;gap:8px;align-items:center;flex-wrap:wrap'
+        row.style.cssText = 'display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px'
 
-        const mkBtn = (label, fn, primary) => {
-          const b = document.createElement('button')
-          b.textContent = label
-          b.style.cssText =
-            'padding:6px 14px;border-radius:8px;font:600 12px system-ui;cursor:pointer;' +
-            (primary
-              ? 'border:none;background:linear-gradient(135deg,#4f8cff,#8a6bff);color:#fff'
-              : 'border:1px solid #3a4152;background:#1d212b;color:#dbe2f0')
-          b.addEventListener('click', fn)
-          return b
-        }
-
-        if (!net.room) {
-          status.textContent =
-            '一个人开房，另一个人输入房间号加入。两边都要先用「打开 ROM」载入同一个游戏，然后点「开始同步」。'
-          const inp = document.createElement('input')
-          inp.placeholder = '房间号'
-          inp.style.cssText =
-            'width:110px;padding:6px 8px;border-radius:8px;border:1px solid #3a4152;background:#12151c;color:#dbe2f0;font:12px ui-monospace,monospace'
-          row.appendChild(
-            mkBtn(
-              '开房',
-              async () => {
-                try {
-                  const r = await fetch(auth.server + '/api/nes/net/rooms', {
-                    method: 'POST',
-                    headers: { authorization: 'Bearer ' + auth.token, 'content-type': 'application/json' },
-                    body: '{}',
-                  }).then((x) => x.json())
-                  if (!r || !r.room) throw new Error((r && r.error) || '开房失败')
-                  net.room = r.room.id
-                  net.side = 'host'
-                  renderNet()
-                } catch (e) {
-                  onToast('开房失败：' + e.message)
-                }
-              },
-              true,
-            ),
-          )
-          row.appendChild(inp)
-          row.appendChild(
-            mkBtn('加入', async () => {
-              const code = String(inp.value || '').trim()
-              if (!code) return onToast('先填房间号')
-              try {
-                const r = await fetch(auth.server + '/api/nes/net/rooms/' + code + '/join', {
-                  method: 'POST',
-                  headers: { authorization: 'Bearer ' + auth.token, 'content-type': 'application/json' },
-                  body: '{}',
-                }).then((x) => x.json())
-                if (!r || !r.side) throw new Error((r && r.error) || '加入失败')
-                net.room = code
-                net.side = r.side
-                renderNet()
-              } catch (e) {
-                onToast('加入失败：' + e.message)
-              }
-            }),
-          )
-        } else {
-          status.textContent =
-            '房间 ' +
-            net.room +
-            ' · 我是' +
-            (net.side === 'host' ? '主机（1P）' : '客机（2P）') +
-            '\n' +
-            (canvas ? 'ROM 已载入' : '⚠ 还没载入 ROM') +
-            ' · ' +
-            (net.peerPresent ? '对方已进房' : '等对方进房')
-          row.appendChild(
-            mkBtn(
-              net.active ? '停止' : '开始同步',
-              async () => {
-                if (net.active) {
-                  net.active = false
-                  cancelAnimationFrame(raf)
-                  running = false
-                  window.clearInterval(net.pollTimer)
-                  const el = $('[data-net-status]')
-                  if (el) el.textContent = ''
-                  renderNet()
-                  return
-                }
-                if (!canvas) return onToast('先载入 ROM，再开始同步')
-                net.frame = 0
-                net.mine.clear()
-                net.theirs.clear()
-                net.unsent = []
-                net.prevMine = [false, false, false, false, false, false, false, false]
-                net.prevTheirs = [false, false, false, false, false, false, false, false]
-                net.active = true
-                net.pollTimer = window.setInterval(pollPeer, 120)
-                await pollPeer()
-                if (!net.peerPresent) {
-                  net.active = false
-                  window.clearInterval(net.pollTimer)
-                  renderNet()
-                  return onToast('对方还没进房间')
-                }
-                startLoop()
-                renderNet()
-              },
-              !net.active,
-            ),
-          )
-          row.appendChild(
-            mkBtn('离开', async () => {
-              try {
-                await fetch(auth.server + '/api/nes/net/rooms/' + net.room + '/leave', {
-                  method: 'POST',
-                  headers: { authorization: 'Bearer ' + auth.token, 'content-type': 'application/json' },
-                  body: '{}',
-                })
-              } catch (e) {}
-              net.active = false
-              net.room = ''
-              net.side = ''
-              window.clearInterval(net.pollTimer)
-              cancelAnimationFrame(raf)
-              running = false
-              renderNet()
-            }),
-          )
-        }
-
+        const extra = net.room ? renderRoomView(status, row) : renderLobbyView(status, row)
         netPanel.appendChild(status)
+        if (extra) netPanel.appendChild(extra)
         netPanel.appendChild(row)
 
         const tip = document.createElement('div')
         tip.textContent =
-          '两边必须载入同一个 ROM 文件。联机时每一帧都要等到对方的按键才前进，网络卡顿时画面会顿一下，但两边永远一致。'
+          '两边必须载入同一个 ROM。联机时每帧都要等到对方按键才前进，卡顿时画面会顿一下，但两边永远一致。'
         tip.style.cssText = 'margin-top:12px;font-size:11px;color:#6b7382;line-height:1.8'
         netPanel.appendChild(tip)
       }
 
-      $('[data-net]').addEventListener('click', () => {
+      $('[data-net]').addEventListener('click', async () => {
         if (netPanel) {
           netPanel.remove()
           netPanel = null
+          stopRoomPoll()
           return
         }
         netPanel = document.createElement('div')
@@ -7982,8 +8111,19 @@ const seatAvatarEl = (s, size) => {
         netPanel.style.cssText =
           'position:absolute;inset:0;z-index:6;background:rgba(20,22,28,.98);padding:14px;overflow:auto'
         wrap.appendChild(netPanel)
+        try {
+          const r = await netGet('/api/nes/net/rooms')
+          lobbyRooms = (r && r.rooms) || []
+        } catch (e) {
+          lobbyRooms = []
+        }
+        if (net.room) {
+          await loadRoom()
+          startRoomPoll()
+        }
         renderNet()
       })
+
 
       const onKey = (e) => {
         if (!document.body.contains(wrap)) return
