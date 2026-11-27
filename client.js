@@ -1880,6 +1880,7 @@ window.__ModuleLoader__.load({
                     ['📹', '开会', '音视频会议', () => openMeeting({ auth, onToast: (m) => setErr(m) })],
                     ['🎮', '钓鱼', '小游戏窗口', () => props.onOpenGame()],
                     ['🕹', '红白机', '载入 .nes，可联机', () => openNes({ auth, onToast: (m) => setErr(m), friends })],
+                    ['🎮', 'GBA', '载入 .gba 玩', () => openGba({ auth, onToast: (m) => setErr(m) })],
                     ['🎤', 'KTV', '同步伴奏一起唱', () => openKtv({ auth, onToast: (m) => setErr(m), target: active })],
                     ['🀄', '麻将', '缺的位置机器人补', () => openMahjong({ auth, onToast: (m) => setErr(m) })],
                     ['🏰', '阿瓦隆', '5-10 人推理局', () => openAvalon({ auth, onToast: (m) => setErr(m) })],
@@ -8290,6 +8291,180 @@ const seatAvatarEl = (s, size) => {
         window.removeEventListener('keyup', onKey, true)
         window.removeEventListener('gamepadconnected', onPadIn)
         window.removeEventListener('gamepaddisconnected', onPadOut)
+        wrap.remove()
+      })
+    }
+
+    /* ---------- GBA 模拟器（mGBA wasm）---------- */
+    function openGba(opts) {
+      const onToast = opts.onToast || (() => {})
+      const wrap = document.createElement('div')
+      wrap.style.cssText = [
+        'position:fixed',
+        'right:18px',
+        'bottom:18px',
+        'width:560px',
+        'max-width:calc(100vw - 20px)',
+        'z-index:2147483646',
+        'display:flex',
+        'flex-direction:column',
+        'border-radius:14px',
+        'background:#14161c',
+        'border:2px solid #2b3040',
+        'box-shadow:0 26px 70px rgba(0,0,0,.45)',
+        'font:13px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif',
+        'color:#e6e9ef',
+        'overflow:hidden',
+      ].join(';')
+      wrap.innerHTML =
+        '<div data-bar style="display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid #2b3040">' +
+        '<b style="font-size:13.5px">🎮 GBA</b>' +
+        '<span data-info style="font-size:11.5px;color:#8b93a5"></span>' +
+        '<span style="flex:1"></span>' +
+        '<button data-open style="padding:4px 9px;border-radius:8px;border:1px solid #3a4152;background:#1d212b;color:#dbe2f0;font:600 11.5px system-ui;cursor:pointer">打开 ROM</button>' +
+        '<button data-pause style="padding:4px 9px;border-radius:8px;border:1px solid #3a4152;background:#1d212b;color:#dbe2f0;font:600 11.5px system-ui;cursor:pointer">暂停</button>' +
+        '<button data-size style="padding:4px 9px;border-radius:8px;border:1px solid #3a4152;background:#1d212b;color:#dbe2f0;font:600 11.5px system-ui;cursor:pointer">2×</button>' +
+        '<button data-mute style="padding:4px 9px;border-radius:8px;border:1px solid #3a4152;background:#1d212b;color:#dbe2f0;font:600 11.5px system-ui;cursor:pointer">🔊</button>' +
+        '<button data-close style="padding:4px 9px;border-radius:8px;border:1px solid #3a4152;background:#1d212b;color:#dbe2f0;font:600 11.5px system-ui;cursor:pointer">✕</button>' +
+        '</div>' +
+        '<div data-stage style="padding:12px;display:flex;align-items:center;justify-content:center;background:#0b0d12;min-height:200px">' +
+        '<div data-hint style="color:#7c8598;font-size:12px;padding:40px 10px;text-align:center">点右上角「打开 ROM」，选一个 .gba 文件<br><span style="font-size:11px;color:#5d6577">方向键移动 · Z=A · X=B · A/S=L/R · Enter=Start · Shift=Select</span></div>' +
+        '</div>' +
+        '<div style="padding:6px 12px 8px;font-size:11px;color:#7c8598;border-top:1px solid #2b3040">方向键 · Z=A · X=B · A=L · S=R · Enter=Start · Shift=Select</div>'
+      document.body.appendChild(wrap)
+      attachScaler(wrap, 'gba')
+      attachDragger(wrap, 'gba')
+
+      const $ = (s) => wrap.querySelector(s)
+      const stage = $('[data-stage]')
+      const info = $('[data-info]')
+      const fileInput = document.createElement('input')
+      fileInput.type = 'file'
+      fileInput.accept = '.gba,application/octet-stream'
+      fileInput.style.display = 'none'
+      wrap.appendChild(fileInput)
+
+      let gba = null
+      let canvas = null
+      let scale = 2
+      let muted = false
+      let paused = false
+      const held = {}
+      const KEYMAP = {
+        ArrowUp: 'UP',
+        ArrowDown: 'DOWN',
+        ArrowLeft: 'LEFT',
+        ArrowRight: 'RIGHT',
+        KeyZ: 'A',
+        KeyX: 'B',
+        KeyA: 'L',
+        KeyS: 'R',
+        Enter: 'START',
+        ShiftRight: 'SELECT',
+        ShiftLeft: 'SELECT',
+      }
+
+      const setSize = (s) => {
+        scale = s
+        if (canvas) {
+          canvas.style.width = 240 * scale + 'px'
+          canvas.style.height = 160 * scale + 'px'
+        }
+        $('[data-size]').textContent = s + '×'
+      }
+
+      const boot = async (file) => {
+        try {
+          info.textContent = '加载内核…'
+          const mod = await import('/api/share-chat/vendor/mgba.js')
+          const factory = mod.default || mod.mGBA || mod
+          stage.textContent = ''
+          canvas = document.createElement('canvas')
+          canvas.width = 240
+          canvas.height = 160
+          canvas.style.cssText =
+            'image-rendering:pixelated;display:block;border-radius:6px;background:#000;width:' +
+            240 * scale +
+            'px;height:' +
+            160 * scale +
+            'px'
+          stage.appendChild(canvas)
+          gba = await factory({ canvas })
+          info.textContent = '内核就绪，载入 ROM…'
+          await new Promise((resolve, reject) => {
+            try {
+              gba.uploadRom(file, resolve)
+            } catch (e) {
+              reject(e)
+            }
+          })
+          info.textContent = file.name + ' · ' + Math.round(file.size / 1024) + ' KB'
+          setSize(scale)
+          try {
+            gba.setVolume(70)
+          } catch (e) {}
+        } catch (e) {
+          info.textContent = ''
+          onToast('GBA 启动失败：' + (e && e.message))
+        }
+      }
+
+      $('[data-open]').addEventListener('click', () => fileInput.click())
+      fileInput.addEventListener('change', () => {
+        const f = fileInput.files && fileInput.files[0]
+        if (!f) return
+        boot(f)
+        fileInput.value = ''
+      })
+      $('[data-pause]').addEventListener('click', () => {
+        if (!gba) return onToast('先打开一个 ROM')
+        paused = !paused
+        try {
+          if (paused) gba.pauseGame()
+          else gba.resumeGame()
+        } catch (e) {}
+        $('[data-pause]').textContent = paused ? '继续' : '暂停'
+      })
+      $('[data-size]').addEventListener('click', () => setSize(scale === 2 ? 3 : scale === 3 ? 1 : 2))
+      $('[data-mute]').addEventListener('click', () => {
+        if (!gba) return
+        muted = !muted
+        try {
+          if (muted) gba.pauseAudio()
+          else gba.resumeAudio()
+        } catch (e) {}
+        $('[data-mute]').textContent = muted ? '🔇' : '🔊'
+      })
+
+      const onKey = (e) => {
+        if (!document.body.contains(wrap)) return
+        const t = e.target
+        if (t && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable)) return
+        const name = KEYMAP[e.code]
+        if (!name || !gba) return
+        e.preventDefault()
+        if (e.type === 'keydown') {
+          if (held[name]) return
+          held[name] = true
+          try {
+            gba.buttonPress(name)
+          } catch (err) {}
+        } else {
+          held[name] = false
+          try {
+            gba.buttonUnpress(name)
+          } catch (err) {}
+        }
+      }
+      window.addEventListener('keydown', onKey, true)
+      window.addEventListener('keyup', onKey, true)
+
+      $('[data-close]').addEventListener('click', () => {
+        window.removeEventListener('keydown', onKey, true)
+        window.removeEventListener('keyup', onKey, true)
+        try {
+          gba && gba.pauseGame()
+        } catch (e) {}
         wrap.remove()
       })
     }
