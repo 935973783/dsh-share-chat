@@ -7218,6 +7218,7 @@ const seatAvatarEl = (s, size) => {
         '<div data-bar style="display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid #2b3040">' +
         '<b style="font-size:13.5px">🎮 红白机</b>' +
         '<span data-info style="font-size:11.5px;color:#8b93a5"></span>' +
+        '<span data-pad style="font-size:11px;color:#6ad38f"></span>' +
         '<span style="flex:1"></span>' +
         '<button data-open style="padding:4px 9px;border-radius:8px;border:1px solid #3a4152;background:#1d212b;color:#dbe2f0;font:600 11.5px system-ui;cursor:pointer">打开 ROM</button>' +
         '<button data-lib style="padding:4px 9px;border-radius:8px;border:1px solid #3a4152;background:#1d212b;color:#dbe2f0;font:600 11.5px system-ui;cursor:pointer">游戏库</button>' +
@@ -7254,6 +7255,69 @@ const seatAvatarEl = (s, size) => {
       let scale = 2
       let buttons = {}
       let captureFor = null
+      let padState = {}
+      let padSeen = false
+
+      /** 读第一个手柄，映射成 NES 的八个键 */
+      const readPad = () => {
+        try {
+          const list = navigator.getGamepads ? navigator.getGamepads() : []
+          if (!list) return null
+          for (const p of list) if (p && p.connected) return p
+        } catch (e) {}
+        return null
+      }
+
+      const padWanted = (pad) => {
+        if (!pad) return {}
+        const b = pad.buttons || []
+        const ax = pad.axes || []
+        const on = (i) => !!(b[i] && (b[i].pressed || b[i].value > 0.5))
+        const want = {
+          UP: on(12) || (ax[1] !== undefined && ax[1] < -0.5),
+          DOWN: on(13) || (ax[1] !== undefined && ax[1] > 0.5),
+          LEFT: on(14) || (ax[0] !== undefined && ax[0] < -0.5),
+          RIGHT: on(15) || (ax[0] !== undefined && ax[0] > 0.5),
+          A: on(0) || on(2),
+          B: on(1) || on(3),
+          START: on(9),
+          SELECT: on(8),
+        }
+        return want
+      }
+
+      /** 把手柄状态同步给模拟器，和键盘互不干扰 */
+      const syncPad = () => {
+        if (!nes || !nes._code) return
+        const pad = readPad()
+        if (!pad) {
+          if (padSeen) {
+            padSeen = false
+            const chip = $('[data-pad]')
+            if (chip) chip.textContent = ''
+            for (const k of KEY_ORDER) {
+              if (padState[k]) {
+                padState[k] = false
+                if (!buttons[k]) nes.buttonUp(1, nes._code[k])
+              }
+            }
+          }
+          return
+        }
+        if (!padSeen) {
+          padSeen = true
+          const chip = $('[data-pad]')
+          if (chip) chip.textContent = '🎮 ' + (pad.id || '手柄').slice(0, 18)
+        }
+        const want = padWanted(pad)
+        for (const k of KEY_ORDER) {
+          const w = !!want[k]
+          if (w === !!padState[k]) continue
+          padState[k] = w
+          if (w) nes.buttonDown(1, nes._code[k])
+          else if (!buttons[k]) nes.buttonUp(1, nes._code[k])
+        }
+      }
       // 按键映射：name → KeyboardEvent.code，用户可改，存在本地
       const KEY_ORDER = ['UP', 'DOWN', 'LEFT', 'RIGHT', 'A', 'B', 'START', 'SELECT']
       const KEY_LABEL = {
@@ -7346,6 +7410,7 @@ const seatAvatarEl = (s, size) => {
         const step = () => {
           if (!running) return
           try {
+            syncPad()
             nes.frame()
           } catch (e) {
             running = false
@@ -7587,7 +7652,8 @@ const seatAvatarEl = (s, size) => {
         keysPanel.appendChild(reset)
 
         const tip = document.createElement('div')
-        tip.textContent = '点右边那格，然后按下想用的键。Esc 取消。设置只存在这台电脑。'
+        tip.textContent =
+          '点右边那格，然后按下想用的键。Esc 取消。设置只存在这台电脑。手柄接上按任意键就能用，方向键 + A/B + 开始/选择，不用设置。'
         tip.style.cssText = 'margin-top:10px;font-size:11px;color:#6b7382;line-height:1.7'
         keysPanel.appendChild(tip)
       }
@@ -7645,11 +7711,25 @@ const seatAvatarEl = (s, size) => {
       window.addEventListener('keydown', onKey, true)
       window.addEventListener('keyup', onKey, true)
 
+      // 手柄插拔：浏览器要求先按一下手柄上的键才认
+      const onPadIn = (e) => {
+        const chip = $('[data-pad]')
+        if (chip) chip.textContent = '🎮 ' + String((e && e.gamepad && e.gamepad.id) || '手柄').slice(0, 18)
+      }
+      const onPadOut = () => {
+        const chip = $('[data-pad]')
+        if (chip) chip.textContent = ''
+      }
+      window.addEventListener('gamepadconnected', onPadIn)
+      window.addEventListener('gamepaddisconnected', onPadOut)
+
       $('[data-close]').addEventListener('click', () => {
         running = false
         cancelAnimationFrame(raf)
         window.removeEventListener('keydown', onKey, true)
         window.removeEventListener('keyup', onKey, true)
+        window.removeEventListener('gamepadconnected', onPadIn)
+        window.removeEventListener('gamepaddisconnected', onPadOut)
         wrap.remove()
       })
     }
