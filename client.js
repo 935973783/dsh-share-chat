@@ -6125,6 +6125,19 @@ const seatAvatarEl = (s, size) => {
           stt.style.cssText = 'font-size:11px;color:' + (st.ready || st.bot ? '#2f8f65' : '#a184b3')
           info.appendChild(stt)
           card.appendChild(info)
+          // 空位可以直接点，坐下
+          if (st.empty && !(meSeat && meSeat.id)) {
+            card.style.cursor = 'pointer'
+            card.title = '点这里坐下'
+            card.addEventListener('click', async () => {
+              try {
+                await api2('POST', '/api/mj/rooms/' + roomId + '/join')
+                await render()
+              } catch (e) {
+                onToast('坐下失败：' + friendly(e))
+              }
+            })
+          }
           if (st.bot && iAmOwner) {
             card.appendChild(
               btn('移除', async () => {
@@ -6143,6 +6156,23 @@ const seatAvatarEl = (s, size) => {
 
         const acts = document.createElement('div')
         acts.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;align-items:center'
+        // 还没坐下：给一个明确的「坐下」按钮，点空位也能坐
+        if (!(meSeat && meSeat.id)) {
+          acts.appendChild(
+            btn(
+              '坐下',
+              async () => {
+                try {
+                  await api2('POST', '/api/mj/rooms/' + roomId + '/join')
+                  await render()
+                } catch (e) {
+                  onToast('坐下失败：' + friendly(e))
+                }
+              },
+              true,
+            ),
+          )
+        }
         if (meSeat && meSeat.id) {
           acts.appendChild(
             btn(
