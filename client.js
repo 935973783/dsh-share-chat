@@ -6249,7 +6249,22 @@ const seatAvatarEl = (s, size) => {
         wrap.remove()
       })
 
-      renderLobby()
+      // 首次渲染如果抛错，把错误写在窗口里，而不是留一个空白窗口
+      Promise.resolve()
+        .then(() => renderLobby())
+        .catch((e) => {
+          bodyEl.textContent = ''
+          const box = document.createElement('div')
+          box.style.cssText = 'font-size:12px;color:#c0392b;padding:12px;line-height:1.7'
+          box.textContent = '麻将加载失败：' + (e && e.message ? e.message : String(e))
+          const retry = document.createElement('button')
+          retry.textContent = '重试'
+          retry.style.cssText =
+            'display:block;margin-top:10px;padding:6px 14px;border-radius:9px;border:1.5px solid #ffd3e6;background:#fff;cursor:pointer'
+          retry.addEventListener('click', () => renderLobby().catch(() => {}))
+          box.appendChild(retry)
+          bodyEl.appendChild(box)
+        })
       timer = window.setInterval(tick, 1300)
       return { close: () => wrap.remove() }
     }
@@ -6275,8 +6290,22 @@ const seatAvatarEl = (s, size) => {
         el.style.bottom = 'auto'
       }
       const saved = readJson(SK)
+      const visible = () => {
+        const r = el.getBoundingClientRect()
+        const vw = window.innerWidth
+        const vh = window.innerHeight
+        return r.right > 40 && r.left < vw - 40 && r.bottom > 40 && r.top < vh - 40
+      }
       if (saved && typeof saved.x === 'number' && typeof saved.y === 'number') {
         place(saved.x, saved.y)
+        // 上次保存的位置如果跑到屏幕外（换显示器 / 改了缩放），回到右下角默认位
+        if (!visible()) {
+          el.style.left = ''
+          el.style.top = ''
+          el.style.right = '18px'
+          el.style.bottom = '18px'
+          writeJson(SK, { x: el.offsetLeft, y: el.offsetTop })
+        }
       } else {
         const r = el.getBoundingClientRect()
         const sc = el.__scale || 1
