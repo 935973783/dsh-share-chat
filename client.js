@@ -7195,6 +7195,7 @@ const seatAvatarEl = (s, size) => {
     /* ---------- 红白机模拟器 ---------- */
     function openNes(opts) {
       const onToast = opts.onToast || (() => {})
+      const auth = opts.auth || {}
       const wrap = document.createElement('div')
       wrap.style.cssText = [
         'position:fixed',
@@ -7219,6 +7220,8 @@ const seatAvatarEl = (s, size) => {
         '<span data-info style="font-size:11.5px;color:#8b93a5"></span>' +
         '<span style="flex:1"></span>' +
         '<button data-open style="padding:4px 9px;border-radius:8px;border:1px solid #3a4152;background:#1d212b;color:#dbe2f0;font:600 11.5px system-ui;cursor:pointer">打开 ROM</button>' +
+        '<button data-lib style="padding:4px 9px;border-radius:8px;border:1px solid #3a4152;background:#1d212b;color:#dbe2f0;font:600 11.5px system-ui;cursor:pointer">游戏库</button>' +
+        '<button data-up style="padding:4px 9px;border-radius:8px;border:1px solid #3a4152;background:#1d212b;color:#dbe2f0;font:600 11.5px system-ui;cursor:pointer">上传</button>' +
         '<button data-play style="padding:4px 9px;border-radius:8px;border:1px solid #3a4152;background:#1d212b;color:#dbe2f0;font:600 11.5px system-ui;cursor:pointer">暂停</button>' +
         '<button data-size style="padding:4px 9px;border-radius:8px;border:1px solid #3a4152;background:#1d212b;color:#dbe2f0;font:600 11.5px system-ui;cursor:pointer">2×</button>' +
         '<button data-close style="padding:4px 9px;border-radius:8px;border:1px solid #3a4152;background:#1d212b;color:#dbe2f0;font:600 11.5px system-ui;cursor:pointer">✕</button>' +
@@ -7365,6 +7368,118 @@ const seatAvatarEl = (s, size) => {
       document.head.appendChild(tag)
 
       $('[data-open]').addEventListener('click', () => fileInput.click())
+
+      // ── 游戏库：把自制 rom 传到服务器，朋友也能载入 ──
+      const upInput = document.createElement('input')
+      upInput.type = 'file'
+      upInput.accept = '.nes,application/octet-stream'
+      upInput.style.display = 'none'
+      wrap.appendChild(upInput)
+
+      const loadFromUrl = async (url, name) => {
+        try {
+          const r = await fetch(url)
+          if (!r.ok) throw new Error('下载失败 ' + r.status)
+          const buf = await r.arrayBuffer()
+          loadRom(buf)
+          if (name) info.textContent = name + ' · ' + Math.round(buf.byteLength / 1024) + ' KB'
+        } catch (e) {
+          onToast('载入失败：' + (e && e.message))
+        }
+      }
+
+      $('[data-up]').addEventListener('click', () => upInput.click())
+      upInput.addEventListener('change', async () => {
+        const f = upInput.files && upInput.files[0]
+        if (!f) return
+        upInput.value = ''
+        try {
+          info.textContent = '上传中…'
+          const buf = await f.arrayBuffer()
+          const res = await fetch(auth.server + '/api/upload', {
+            method: 'POST',
+            headers: {
+              authorization: 'Bearer ' + auth.token,
+              'content-type': 'application/octet-stream',
+              'x-filename': encodeURIComponent(f.name || ''),
+            },
+            body: buf,
+          })
+          const up = await res.json()
+          if (!up || !up.id) throw new Error((up && up.error) || '上传失败')
+          const r2 = await fetch(auth.server + '/api/nes/games', {
+            method: 'POST',
+            headers: { authorization: 'Bearer ' + auth.token, 'content-type': 'application/json' },
+            body: JSON.stringify({ uploadId: up.id, name: f.name }),
+          })
+          const j2 = await r2.json()
+          if (!j2 || !j2.game) throw new Error((j2 && j2.error) || '登记失败')
+          info.textContent = '已上传：' + j2.game.name
+          onToast('已加入游戏库，朋友可以玩了')
+        } catch (e) {
+          info.textContent = ''
+          onToast('上传失败：' + (e && e.message))
+        }
+      })
+
+      $('[data-lib]').addEventListener('click', async () => {
+        const old = wrap.querySelector('[data-lib-panel]')
+        if (old) {
+          old.remove()
+          return
+        }
+        const panel = document.createElement('div')
+        panel.setAttribute('data-lib-panel', '1')
+        panel.style.cssText =
+          'position:absolute;inset:0;z-index:5;background:rgba(20,22,28,.97);padding:14px;overflow:auto'
+        const head = document.createElement('div')
+        head.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:10px'
+        const t = document.createElement('b')
+        t.textContent = '🎮 游戏库'
+        t.style.cssText = 'font-size:13px'
+        const close = document.createElement('button')
+        close.textContent = '返回'
+        close.style.cssText =
+          'margin-left:auto;padding:4px 10px;border-radius:8px;border:1px solid #3a4152;background:#1d212b;color:#dbe2f0;font:600 11.5px system-ui;cursor:pointer'
+        close.addEventListener('click', () => panel.remove())
+        head.appendChild(t)
+        head.appendChild(close)
+        panel.appendChild(head)
+
+        const listEl = document.createElement('div')
+        listEl.textContent = '加载中…'
+        listEl.style.cssText = 'font-size:12px;color:#7c8598'
+        panel.appendChild(listEl)
+
+        try {
+          const r = await fetch(auth.server + '/api/nes/games', {
+            headers: { authorization: 'Bearer ' + auth.token },
+          }).then((x) => x.json())
+          const games = (r && r.games) || []
+          listEl.textContent = ''
+          if (!games.length) {
+            listEl.textContent = '还没有人上传。点上面的「上传」把你的游戏放进来。'
+            return
+          }
+          for (const g of games) {
+            const row = document.createElement('button')
+            row.style.cssText =
+              'display:block;width:100%;text-align:left;padding:9px 10px;margin-bottom:6px;border-radius:9px;' +
+              'border:1px solid #2b3040;background:#1a1d26;color:#dbe2f0;font:12px system-ui;cursor:pointer'
+            row.textContent = g.name + '  ·  ' + Math.round(g.size / 1024) + 'KB  ·  ' + g.owner
+            row.addEventListener('click', async () => {
+              panel.remove()
+              await loadFromUrl(auth.server + g.url, g.name)
+            })
+            listEl.appendChild(row)
+          }
+        } catch (e) {
+          listEl.textContent = '游戏库读取失败：' + (e && e.message)
+        }
+
+        wrap.appendChild(panel)
+      })
+
       fileInput.addEventListener('change', () => {
         const f = fileInput.files && fileInput.files[0]
         if (!f) return
