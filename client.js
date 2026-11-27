@@ -1608,6 +1608,41 @@ window.__ModuleLoader__.load({
         let content
         if (kind === 'snapshot') {
           content = h(SnapshotCard, { snapshotId: b.snapshotId, auth })
+        } else if (kind === 'nes-invite') {
+          content = h(
+            'div',
+            {
+              className: 'sc-bubble',
+              style: {
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+                padding: '10px 12px',
+              },
+            },
+            h(
+              'div',
+              { style: { minWidth: 0 } },
+              h('div', { style: { fontWeight: 650, fontSize: '12.5px' } }, '🎮 邀请你一起打红白机'),
+              h(
+                'div',
+                { style: { fontSize: '11px', opacity: 0.75, marginTop: '2px' } },
+                '房间 #' + (b.room || '') + ' · 你是 2P',
+              ),
+            ),
+            h(
+              'button',
+              {
+                className: 'sc-btn sc-btn-sm',
+                style: { flex: '0 0 auto' },
+                onClick: (e) => {
+                  e.stopPropagation()
+                  openNes({ auth, onToast: (msg) => setErr(msg), joinRoom: b.room })
+                },
+              },
+              '加入',
+            ),
+          )
         } else if (kind === 'image') {
           const src = auth.server + b.url
           content = h(
@@ -1817,7 +1852,7 @@ window.__ModuleLoader__.load({
             'button',
             {
               className: 'sc-btn',
-              onClick: () => openNes({ auth, onToast: (m) => setErr(m) }),
+              onClick: () => openNes({ auth, onToast: (m) => setErr(m), friends }),
               title: '红白机：载入 .nes 自己玩',
             },
             '🕹 红白机',
@@ -7196,6 +7231,8 @@ const seatAvatarEl = (s, size) => {
     function openNes(opts) {
       const onToast = opts.onToast || (() => {})
       const auth = opts.auth || {}
+      const friendsList = Array.isArray(opts.friends) ? opts.friends : []
+      const joinRoom = String(opts.joinRoom || '')
       const wrap = document.createElement('div')
       wrap.style.cssText = [
         'position:fixed',
@@ -8044,6 +8081,48 @@ const seatAvatarEl = (s, size) => {
           )
         }
         row.appendChild(
+          mkBtn2('邀请', () => {
+            const pick = document.createElement('div')
+            pick.style.cssText =
+              'position:absolute;inset:0;z-index:8;background:rgba(12,14,18,.97);padding:14px;overflow:auto'
+            const h2 = document.createElement('div')
+            h2.textContent = '邀请谁来玩？'
+            h2.style.cssText = 'font-size:13px;font-weight:650;margin-bottom:10px;color:#e6e9ef'
+            pick.appendChild(h2)
+            const closeP = document.createElement('button')
+            closeP.textContent = '取消'
+            closeP.style.cssText =
+              'margin-bottom:10px;padding:5px 12px;border-radius:8px;border:1px solid #3a4152;background:#1d212b;color:#dbe2f0;font:600 11.5px system-ui;cursor:pointer'
+            closeP.addEventListener('click', () => pick.remove())
+            pick.appendChild(closeP)
+            if (!friendsList.length) {
+              const none = document.createElement('div')
+              none.textContent = '还没有好友，先去聊天那边加一个。'
+              none.style.cssText = 'font-size:12px;color:#7c8598'
+              pick.appendChild(none)
+            }
+            for (const f of friendsList) {
+              const b = document.createElement('button')
+              b.textContent = (f.displayName || f.id) + '  @' + f.id
+              b.style.cssText =
+                'display:block;width:100%;text-align:left;padding:9px 11px;margin-bottom:6px;border-radius:9px;' +
+                'border:1px solid #2b3040;background:#1a1d26;color:#dbe2f0;font:12px system-ui;cursor:pointer'
+              b.addEventListener('click', async () => {
+                try {
+                  const r = await netPost('/api/messages', { to: f.id, nesInvite: net.room })
+                  if (r && r.error) throw new Error(r.error)
+                  pick.remove()
+                  onToast('已把邀请发给 ' + (f.displayName || f.id))
+                } catch (e) {
+                  onToast('发送失败：' + e.message)
+                }
+              })
+              pick.appendChild(b)
+            }
+            netPanel.appendChild(pick)
+          }),
+        )
+        row.appendChild(
           mkBtn2('离开', async () => {
             try {
               await netPost('/api/nes/net/rooms/' + net.room + '/leave')
@@ -8174,6 +8253,24 @@ const seatAvatarEl = (s, size) => {
       }
       window.addEventListener('gamepadconnected', onPadIn)
       window.addEventListener('gamepaddisconnected', onPadOut)
+
+      // 从聊天里的邀请点进来：直接进房坐下
+      if (joinRoom) {
+        setTimeout(async () => {
+          try {
+            const r = await netPost('/api/nes/net/rooms/' + joinRoom + '/join')
+            if (r && r.side) {
+              net.room = joinRoom
+              net.side = r.side
+              $('[data-net]').click()
+            } else {
+              onToast('进不去了：' + ((r && r.error) || '房间不存在'))
+            }
+          } catch (e) {
+            onToast('加入失败')
+          }
+        }, 400)
+      }
 
       $('[data-close]').addEventListener('click', () => {
         running = false
