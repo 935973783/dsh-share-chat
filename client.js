@@ -1880,15 +1880,7 @@ window.__ModuleLoader__.load({
                     ['📹', '开会', '音视频会议', () => openMeeting({ auth, onToast: (m) => setErr(m) })],
                     ['🎮', '钓鱼', '小游戏窗口', () => props.onOpenGame()],
                     ['🕹', '红白机', '载入 .nes，可联机', () => openNes({ auth, onToast: (m) => setErr(m), friends })],
-                    [
-                      '🎮',
-                      'GBA',
-                      '在独立窗口里玩 .gba',
-                      () => {
-                        const w = window.open('/api/share-chat/gba/', 'dsh-gba', 'width=1000,height=760')
-                        if (!w) setErr('弹窗被拦了，允许本站弹窗再试')
-                      },
-                    ],
+                    ['🎮', 'GBA', '内嵌播放 .gba', () => openGbaFrame({ onToast: (m) => setErr(m) })],
                     ['🎤', 'KTV', '同步伴奏一起唱', () => openKtv({ auth, onToast: (m) => setErr(m), target: active })],
                     ['🀄', '麻将', '缺的位置机器人补', () => openMahjong({ auth, onToast: (m) => setErr(m) })],
                     ['🏰', '阿瓦隆', '5-10 人推理局', () => openAvalon({ auth, onToast: (m) => setErr(m) })],
@@ -8301,6 +8293,56 @@ const seatAvatarEl = (s, size) => {
         window.removeEventListener('gamepaddisconnected', onPadOut)
         wrap.remove()
       })
+    }
+
+    /* ---------- GBA：内嵌 iframe 播放页（页面自己带 isolation 头）---------- */
+    function openGbaFrame(opts) {
+      const onToast = opts.onToast || (() => {})
+      const old = document.querySelector('[data-gba-frame]')
+      if (old) {
+        old.remove()
+        return
+      }
+      const wrap = document.createElement('div')
+      wrap.setAttribute('data-gba-frame', '1')
+      wrap.style.cssText = [
+        'position:fixed',
+        'inset:24px',
+        'z-index:2147483647',
+        'display:flex',
+        'flex-direction:column',
+        'border-radius:14px',
+        'overflow:hidden',
+        'background:#0b0d12',
+        'border:2px solid #2b3040',
+        'box-shadow:0 30px 80px rgba(0,0,0,.55)',
+      ].join(';')
+      const bar = document.createElement('div')
+      bar.style.cssText =
+        'display:flex;align-items:center;gap:10px;padding:8px 12px;background:#14161c;border-bottom:1px solid #232838;font:13px system-ui;color:#e6e9ef'
+      const t = document.createElement('b')
+      t.textContent = '🎮 GBA'
+      t.style.cssText = 'font-size:13.5px'
+      const tip = document.createElement('span')
+      tip.textContent = '内核第一次加载需要联网'
+      tip.style.cssText = 'font-size:11px;color:#8b93a5'
+      const close = document.createElement('button')
+      close.textContent = '✕'
+      close.style.cssText =
+        'margin-left:auto;padding:4px 10px;border-radius:8px;border:1px solid #3a4152;background:#1d212b;color:#dbe2f0;font:600 11.5px system-ui;cursor:pointer'
+      close.addEventListener('click', () => wrap.remove())
+      bar.appendChild(t)
+      bar.appendChild(tip)
+      bar.appendChild(close)
+      wrap.appendChild(bar)
+
+      const frame = document.createElement('iframe')
+      frame.src = '/api/share-chat/gba/'
+      frame.style.cssText = 'flex:1;width:100%;border:0;background:#0b0d12'
+      frame.setAttribute('allow', 'gamepad; fullscreen; autoplay; cross-origin-isolated')
+      wrap.appendChild(frame)
+      document.body.appendChild(wrap)
+      onToast('GBA 窗口已打开，点「打开 ROM」选 .gba 文件')
     }
 
     /* ---------- GBA 模拟器（mGBA wasm）---------- */
