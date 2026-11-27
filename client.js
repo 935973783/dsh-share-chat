@@ -897,6 +897,9 @@ window.__ModuleLoader__.load({
       const [myAvatar, setMyAvatar] = useState('')
       // 未读：会话 key → 条数。清空条件是这个会话被打开
       const [unread, setUnread] = useState({})
+      // 进这个界面的时刻：比它早的消息都算已读，避免一进来全是红点
+      const bootAtRef = React.useRef(Date.now())
+      const lastReadRef = React.useRef(readJson('dsh-share-chat.lastRead') || {})
       // 有新版本时这里放 { current, latest }，点掉后当天不再提示
       const [updateInfo, setUpdateInfo] = useState(null)
       // Electron 里 window.prompt 不可用，所有需要输入的地方都走这个内联框
@@ -987,11 +990,17 @@ window.__ModuleLoader__.load({
       const noteUnread = (batch) => {
         const add = {}
         let latest = null
+        const bootAt = bootAtRef.current
+        const readMap = lastReadRef.current
         for (const m of batch) {
           if (!m || m.from === auth.id) continue
           const key = String(m.to || '').indexOf('g:') === 0 ? m.to : m.from
           if (!key) continue
           if (key === activeRef.current) continue
+          // 只有「进来之后才到」的消息才算未读，历史消息一律不算
+          const at = Number(m.at) || 0
+          const floor = readMap[key] || bootAt
+          if (at <= floor) continue
           add[key] = (add[key] || 0) + 1
           latest = m
         }
@@ -1010,9 +1019,11 @@ window.__ModuleLoader__.load({
         }
       }
 
-      // 打开某个会话就把它的未读清掉
+      // 打开某个会话就把它的未读清掉，并记住「读到哪儿了」
       useEffect(() => {
         if (!active) return
+        lastReadRef.current[active] = Date.now()
+        writeJson('dsh-share-chat.lastRead', lastReadRef.current)
         setUnread((prev) => {
           if (!prev[active]) return prev
           const next = Object.assign({}, prev)
