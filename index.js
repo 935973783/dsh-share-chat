@@ -78,6 +78,31 @@ function pickTitle(snap) {
 }
 
 export function apply(ctx) {
+  // ── 静态资源：模拟器内核等，从插件目录直接发 ──
+  const VENDOR_DIR = new URL('./vendor/', import.meta.url)
+  ctx.inject(['webServer'], (scope) => {
+    scope.effect(() =>
+      scope.webServer.register({
+        path: PREFIX + '/vendor/jsnes.min.js',
+        kind: 'exact',
+        resource: async () => {
+          try {
+            const body = readFileSync(new URL('jsnes.min.js', VENDOR_DIR), 'utf8')
+            return new Response(body, {
+              status: 200,
+              headers: {
+                'content-type': 'application/javascript; charset=utf-8',
+                'cache-control': 'public, max-age=86400',
+              },
+            })
+          } catch (e) {
+            return json(404, { error: 'no-vendor' })
+          }
+        },
+      }),
+    )
+  })
+
   // ── 版本检查：告诉前端 npm 上有没有更新的版本 ──
   let versionCache = { at: 0, latest: '' }
   ctx.inject(['webServer'], (scope) => {

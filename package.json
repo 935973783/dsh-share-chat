@@ -1,6 +1,6 @@
 {
   "name": "dsh-share-chat",
-  "version": "0.40.2",
+  "version": "0.41.0",
   "type": "module",
   "license": "MIT",
   "keywords": [
@@ -28,7 +28,8 @@
     "docs",
     "README.md",
     "LICENSE",
-    "icon.svg"
+    "icon.svg",
+    "vendor/*"
   ],
   "dsh": {
     "bundle": {

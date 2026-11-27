@@ -1817,6 +1817,15 @@ window.__ModuleLoader__.load({
             'button',
             {
               className: 'sc-btn',
+              onClick: () => openNes({ auth, onToast: (m) => setErr(m) }),
+              title: '红白机：载入 .nes 自己玩',
+            },
+            '🕹 红白机',
+          ),
+          h(
+            'button',
+            {
+              className: 'sc-btn',
               onClick: () => openKtv({ auth, onToast: (m) => setErr(m), target: active }),
               title: '一起唱歌：同步伴奏 + 语音',
             },
@@ -7183,7 +7192,223 @@ const seatAvatarEl = (s, size) => {
       return { close: () => wrap.remove() }
     }
 
-    /* ---------- 每日杀手数独 ---------- */
+    /* ---------- 红白机模拟器 ---------- */
+    function openNes(opts) {
+      const onToast = opts.onToast || (() => {})
+      const wrap = document.createElement('div')
+      wrap.style.cssText = [
+        'position:fixed',
+        'right:18px',
+        'bottom:18px',
+        'width:640px',
+        'max-width:calc(100vw - 20px)',
+        'z-index:2147483646',
+        'display:flex',
+        'flex-direction:column',
+        'border-radius:14px',
+        'background:#14161c',
+        'border:2px solid #2b3040',
+        'box-shadow:0 26px 70px rgba(0,0,0,.45)',
+        'font:13px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif',
+        'color:#e6e9ef',
+        'overflow:hidden',
+      ].join(';')
+      wrap.innerHTML =
+        '<div data-bar style="display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid #2b3040">' +
+        '<b style="font-size:13.5px">🎮 红白机</b>' +
+        '<span data-info style="font-size:11.5px;color:#8b93a5"></span>' +
+        '<span style="flex:1"></span>' +
+        '<button data-open style="padding:4px 9px;border-radius:8px;border:1px solid #3a4152;background:#1d212b;color:#dbe2f0;font:600 11.5px system-ui;cursor:pointer">打开 ROM</button>' +
+        '<button data-play style="padding:4px 9px;border-radius:8px;border:1px solid #3a4152;background:#1d212b;color:#dbe2f0;font:600 11.5px system-ui;cursor:pointer">暂停</button>' +
+        '<button data-size style="padding:4px 9px;border-radius:8px;border:1px solid #3a4152;background:#1d212b;color:#dbe2f0;font:600 11.5px system-ui;cursor:pointer">2×</button>' +
+        '<button data-close style="padding:4px 9px;border-radius:8px;border:1px solid #3a4152;background:#1d212b;color:#dbe2f0;font:600 11.5px system-ui;cursor:pointer">✕</button>' +
+        '</div>' +
+        '<div data-stage style="padding:12px;display:flex;align-items:center;justify-content:center;background:#0b0d12">' +
+        '<div data-hint style="color:#7c8598;font-size:12px;padding:36px 10px;text-align:center">点右上角「打开 ROM」，选一个 .nes 文件<br><span style="font-size:11px;color:#5d6577">方向键移动 · Z 是 A · X 是 B · Enter 开始</span></div>' +
+        '</div>' +
+        '<div style="display:flex;align-items:center;gap:10px;padding:7px 12px;border-top:1px solid #2b3040;font-size:11px;color:#7c8598">' +
+        '<span>方向键 · Z=A · X=B · Enter=Start · Shift=Select</span>' +
+        '</div>'
+      document.body.appendChild(wrap)
+      attachScaler(wrap, 'nes')
+      attachDragger(wrap, 'nes')
+
+      const $ = (s) => wrap.querySelector(s)
+      const stage = $('[data-stage]')
+      const info = $('[data-info]')
+      const fileInput = document.createElement('input')
+      fileInput.type = 'file'
+      fileInput.accept = '.nes,application/octet-stream'
+      fileInput.style.display = 'none'
+      wrap.appendChild(fileInput)
+
+      let nes = null
+      let ctx2d = null
+      let canvas = null
+      let running = false
+      let raf = 0
+      let scale = 2
+      let buttons = {}
+      const KEYMAP = {
+        ArrowUp: 'UP',
+        ArrowDown: 'DOWN',
+        ArrowLeft: 'LEFT',
+        ArrowRight: 'RIGHT',
+        KeyZ: 'A',
+        KeyX: 'B',
+        Enter: 'START',
+        ShiftRight: 'SELECT',
+        ShiftLeft: 'SELECT',
+      }
+
+      const setSize = (s) => {
+        scale = s
+        if (canvas) {
+          canvas.style.width = 256 * scale + 'px'
+          canvas.style.height = 240 * scale + 'px'
+        }
+        $('[data-size]').textContent = s + '×'
+      }
+
+      const boot = () => {
+        if (!window.jsnes) return false
+        const C = window.jsnes.Controller
+        const code = {
+          UP: C.BUTTON_UP,
+          DOWN: C.BUTTON_DOWN,
+          LEFT: C.BUTTON_LEFT,
+          RIGHT: C.BUTTON_RIGHT,
+          A: C.BUTTON_A,
+          B: C.BUTTON_B,
+          START: C.BUTTON_START,
+          SELECT: C.BUTTON_SELECT,
+        }
+        nes = new window.jsnes.NES({
+          onFrame: (buf) => {
+            if (!ctx2d) return
+            const img = ctx2d.createImageData(256, 240)
+            const d = img.data
+            for (let i = 0, j = 0; i < buf.length; i++, j += 4) {
+              const v = buf[i]
+              d[j] = v & 0xff
+              d[j + 1] = (v >> 8) & 0xff
+              d[j + 2] = (v >> 16) & 0xff
+              d[j + 3] = 255
+            }
+            ctx2d.putImageData(img, 0, 0)
+          },
+          onAudioSample: () => {},
+          sampleRate: 44100,
+        })
+        nes._code = code
+        return true
+      }
+
+      const startLoop = () => {
+        if (running) return
+        running = true
+        $('[data-play]').textContent = '暂停'
+        const step = () => {
+          if (!running) return
+          try {
+            nes.frame()
+          } catch (e) {
+            running = false
+            onToast('模拟器出错：' + (e && e.message))
+            return
+          }
+          raf = requestAnimationFrame(step)
+        }
+        raf = requestAnimationFrame(step)
+      }
+
+      const pauseLoop = () => {
+        running = false
+        cancelAnimationFrame(raf)
+        $('[data-play]').textContent = '继续'
+      }
+
+      const loadRom = (buf) => {
+        if (!nes && !boot()) {
+          onToast('模拟器内核没加载出来')
+          return
+        }
+        let s = ''
+        const bytes = new Uint8Array(buf)
+        for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i])
+        try {
+          nes.loadROM(s)
+        } catch (e) {
+          onToast('ROM 读不了：' + (e && e.message))
+          return
+        }
+        stage.textContent = ''
+        canvas = document.createElement('canvas')
+        canvas.width = 256
+        canvas.height = 240
+        canvas.style.cssText = 'image-rendering:pixelated;display:block;border-radius:6px'
+        stage.appendChild(canvas)
+        ctx2d = canvas.getContext('2d')
+        setSize(scale)
+        info.textContent = '已载入 ' + Math.round(bytes.length / 1024) + ' KB'
+        startLoop()
+        canvas.setAttribute('tabindex', '0')
+        canvas.focus()
+      }
+
+      const tag = document.createElement('script')
+      tag.src = '/api/share-chat/vendor/jsnes.min.js'
+      tag.onload = () => {
+        if (boot()) info.textContent = '内核就绪，等 ROM'
+      }
+      tag.onerror = () => onToast('内核加载失败')
+      document.head.appendChild(tag)
+
+      $('[data-open]').addEventListener('click', () => fileInput.click())
+      fileInput.addEventListener('change', () => {
+        const f = fileInput.files && fileInput.files[0]
+        if (!f) return
+        const fr = new FileReader()
+        fr.onload = () => loadRom(fr.result)
+        fr.readAsArrayBuffer(f)
+        fileInput.value = ''
+      })
+      $('[data-play]').addEventListener('click', () => {
+        if (!canvas) return onToast('先打开一个 ROM')
+        if (running) pauseLoop()
+        else startLoop()
+      })
+      $('[data-size]').addEventListener('click', () => setSize(scale === 2 ? 3 : scale === 3 ? 1 : 2))
+
+      const onKey = (e) => {
+        if (!document.body.contains(wrap)) return
+        const t = e.target
+        if (t && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable)) return
+        const name = KEYMAP[e.code]
+        if (!name || !nes || !nes._code) return
+        e.preventDefault()
+        const btn = nes._code[name]
+        if (e.type === 'keydown') {
+          if (buttons[name]) return
+          buttons[name] = true
+          nes.buttonDown(1, btn)
+        } else {
+          buttons[name] = false
+          nes.buttonUp(1, btn)
+        }
+      }
+      window.addEventListener('keydown', onKey, true)
+      window.addEventListener('keyup', onKey, true)
+
+      $('[data-close]').addEventListener('click', () => {
+        running = false
+        cancelAnimationFrame(raf)
+        window.removeEventListener('keydown', onKey, true)
+        window.removeEventListener('keyup', onKey, true)
+        wrap.remove()
+      })
+    }
+
     /* ---------- 每日杀手数独 ---------- */
     function openKiller(opts) {
       const auth = opts.auth
