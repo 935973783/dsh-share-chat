@@ -1,6 +1,6 @@
 {
   "name": "dsh-share-chat",
-  "version": "0.49.0",
+  "version": "0.50.0",
   "type": "module",
   "license": "MIT",
   "keywords": [
@@ -29,7 +29,8 @@
     "README.md",
     "LICENSE",
     "icon.svg",
-    "vendor/*"
+    "vendor/*",
+    "gba-page.js"
   ],
   "dsh": {
     "bundle": {

@@ -16,6 +16,8 @@ import { randomBytes } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { spawn } from 'node:child_process'
 
+import { GBA_PAGE } from './gba-page.js'
+
 const PREFIX = '/api/share-chat'
 
 /** 每日数独抓取脚本的位置；可用 DSH_KILLER_UPDATER 覆盖 */
@@ -108,6 +110,27 @@ export function apply(ctx) {
         }),
       )
     }
+  })
+
+  // ── GBA 播放页：独立窗口，页面自己带 cross-origin isolation 头 ──
+  ctx.inject(['webServer'], (scope) => {
+    scope.effect(() =>
+      scope.webServer.register({
+        path: PREFIX + '/gba/',
+        kind: 'exact',
+        resource: async () =>
+          new Response(GBA_PAGE, {
+            status: 200,
+            headers: {
+              'content-type': 'text/html; charset=utf-8',
+              'cache-control': 'no-store',
+              'cross-origin-opener-policy': 'same-origin',
+              'cross-origin-embedder-policy': 'require-corp',
+              'cross-origin-resource-policy': 'same-origin',
+            },
+          }),
+      }),
+    )
   })
 
   // ── 版本检查：告诉前端 npm 上有没有更新的版本 ──

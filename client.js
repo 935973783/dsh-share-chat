@@ -1880,7 +1880,15 @@ window.__ModuleLoader__.load({
                     ['📹', '开会', '音视频会议', () => openMeeting({ auth, onToast: (m) => setErr(m) })],
                     ['🎮', '钓鱼', '小游戏窗口', () => props.onOpenGame()],
                     ['🕹', '红白机', '载入 .nes，可联机', () => openNes({ auth, onToast: (m) => setErr(m), friends })],
-                    ['🎮', 'GBA', '载入 .gba 玩', () => openGba({ auth, onToast: (m) => setErr(m) })],
+                    [
+                      '🎮',
+                      'GBA',
+                      '在独立窗口里玩 .gba',
+                      () => {
+                        const w = window.open('/api/share-chat/gba/', 'dsh-gba', 'width=1000,height=760')
+                        if (!w) setErr('弹窗被拦了，允许本站弹窗再试')
+                      },
+                    ],
                     ['🎤', 'KTV', '同步伴奏一起唱', () => openKtv({ auth, onToast: (m) => setErr(m), target: active })],
                     ['🀄', '麻将', '缺的位置机器人补', () => openMahjong({ auth, onToast: (m) => setErr(m) })],
                     ['🏰', '阿瓦隆', '5-10 人推理局', () => openAvalon({ auth, onToast: (m) => setErr(m) })],
